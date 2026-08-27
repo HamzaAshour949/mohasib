@@ -1,0 +1,11 @@
+node_modules/
+out/
+release/
+dist/
+.DS_Store
+*.log
+_v1_qt/
+aseel_book/
+.vite/
+.cache/
+*.tsbuildinfo

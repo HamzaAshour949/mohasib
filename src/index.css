@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: 'SF Arabic', 'Geeza Pro', 'Noto Naskh Arabic', 'Amiri', system-ui, -apple-system, sans-serif;
+  background: #0F1115;
+  color: #E5E7EB;
+  -webkit-font-smoothing: antialiased;
+}
+
+[dir="rtl"] .ltr-num {
+  unicode-bidi: isolate;
+  direction: ltr;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2A2F3A; border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: #3A4150; }
