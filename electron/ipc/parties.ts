@@ -29,6 +29,28 @@ const ensurePartyAccount = (
   return Number(r.lastInsertRowid);
 };
 
+/**
+ * Point a party at the AR/AP sub-accounts its kind implies, creating whichever
+ * are missing.
+ *
+ * Exported for the fallback "miscellaneous" party that an expense voucher
+ * creates when no supplier is named. That party was inserted straight into the
+ * table with no routing at all, so the audit report flagged it as an error and
+ * the first payment voucher raised against it failed on a missing AP account.
+ * Calling this covers parties an older version already left unrouted, too.
+ */
+export const ensurePartyRouting = (partyId: number): void => {
+  const p = db().prepare(
+    'SELECT code, name, kind, ar_account_id AS ar, ap_account_id AS ap FROM parties WHERE id = ?'
+  ).get(partyId) as { code: string; name: string; kind: string; ar: number | null; ap: number | null } | undefined;
+  if (!p) throw new Error(`Party ${partyId} not found`);
+  const wantsAr = p.kind === 'customer' || p.kind === 'both';
+  const wantsAp = p.kind === 'supplier' || p.kind === 'both';
+  const arId = wantsAr ? ensurePartyAccount(partyId, p.code, p.name, 'ar') : p.ar;
+  const apId = wantsAp ? ensurePartyAccount(partyId, p.code, p.name, 'ap') : p.ap;
+  db().prepare('UPDATE parties SET ar_account_id = ?, ap_account_id = ? WHERE id = ?').run(arId, apId, partyId);
+};
+
 interface PartyInput extends Partial<Party> { id?: number }
 
 export const registerParties = (): void => {

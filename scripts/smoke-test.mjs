@@ -12,9 +12,11 @@
 
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
+const require = createRequire(import.meta.url);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const entry = path.join(root, 'out', 'main', 'index.js');
 const PORT = Number(process.env.SMOKE_DEBUG_PORT ?? 9222);
@@ -34,8 +36,28 @@ const check = (ok, name, detail) => {
   else { failures.push(name); console.log(`  FAIL ${name}${detail === undefined ? '' : ` — ${JSON.stringify(detail)}`}`); }
 };
 
-const child = spawn(process.execPath, [
-  path.join(root, 'node_modules', 'electron', 'cli.js'),
+// Refuse to run against someone else's window. The DevTools endpoint hands out
+// whatever page targets are on the port, with no way to tell whose they are, so
+// a debugger already listening here means this run would drive that app and
+// report its state as ours — which reads as a handful of unrelated assertion
+// failures rather than as a port clash.
+try {
+  const res = await fetch(`http://127.0.0.1:${PORT}/json/version`, { signal: AbortSignal.timeout(1000) });
+  if (res.ok) {
+    console.error(
+      `Something is already serving the DevTools protocol on port ${PORT}.\n` +
+      'Close it (a leftover Electron from an earlier run is the usual cause) or\n' +
+      'set SMOKE_DEBUG_PORT to a free port.'
+    );
+    process.exit(1);
+  }
+} catch { /* nothing listening, which is what we want */ }
+
+// Spawn Electron's own binary, not `node electron/cli.js`. cli.js launches the
+// real Electron as a *child* of itself, so killing what we spawned only killed
+// the wrapper and left the app running — every run leaked a live Electron that
+// went on holding this port and quietly breaking the next run.
+const child = spawn(require('electron'), [
   entry,
   `--remote-debugging-port=${PORT}`,
   ...extraArgs

@@ -12,6 +12,7 @@ import { AppError, toFailure } from '@shared/domain/errors';
 import { QTY_SCALE, scaleQty, valueOf, weightedAverage } from '@shared/domain/Inventory';
 import { isIsoDate, today } from '@shared/domain/Dates';
 import { saveInvoiceCore } from './invoices';
+import { ensurePartyRouting } from './parties';
 import { S } from '../strings';
 import { audit } from '../services/audit';
 import { postJournal, nextSerial } from '../services/posting';
@@ -904,6 +905,10 @@ export const registerExpenseVouchers = (): void => {
             const r = db().prepare(`INSERT INTO parties (code, name, name_en, kind) VALUES ('MISC','مصاريف عامة','Miscellaneous','supplier')`).run();
             partyId = Number(r.lastInsertRowid);
           }
+          // This party is a supplier like any other and needs the same AP
+          // routing. Inserted raw it had none, so the audit report called it
+          // an error and a payment voucher against it failed outright.
+          ensurePartyRouting(partyId);
         }
 
         const r = db().prepare(`INSERT INTO vouchers (kind, serial, date, party_id, cashbox_id, currency, amount_minor, notes,
@@ -1394,7 +1399,7 @@ export const registerRollover = (): void => {
         // debit/credit as REAL and rounded on the way out, so a large ledger
         // closed to a retained-earnings figure that was quietly off.
         const balances = db().prepare(
-          `SELECT a.id, a.type,
+          `SELECT a.id,
                   COALESCE(SUM(CAST(jl.debit_minor AS INTEGER) - CAST(jl.credit_minor AS INTEGER)), 0) AS bal
              FROM accounts a
              JOIN journal_lines jl ON jl.account_id = a.id
@@ -1402,7 +1407,7 @@ export const registerRollover = (): void => {
             WHERE a.type IN ('revenue','expense') AND date(je.date) <= date(?)
             GROUP BY a.id
            HAVING bal != 0`
-        ).all(args.closeDate) as Array<{ id: number; type: string; bal: number }>;
+        ).all(args.closeDate) as Array<{ id: number; bal: number }>;
 
         if (balances.length === 0) return;
 
@@ -1411,16 +1416,25 @@ export const registerRollover = (): void => {
         let netIncome = 0n;
 
         for (const row of balances) {
-          const balance = BigInt(row.bal);
-          if (row.type === 'revenue') {
-            // Revenue carries a credit balance, so `bal` is negative: debit it
-            // back to zero and add the same amount to net income.
-            closingLines.push({ accountId: row.id, debitMinor: (-balance).toString(), creditMinor: '0', currency, memo: 'Year close' });
-            netIncome -= balance;
-          } else {
+          const balance = BigInt(row.bal); // debit − credit
+          // Close each account against the side it actually sits on, not the
+          // side its type usually implies. The contra accounts this app seeds
+          // and posts to itself break that assumption: 4900 Sales Returns is
+          // typed revenue but carries a debit balance, and 5900 Purchase
+          // Returns is typed expense but carries a credit one. Deriving the
+          // side from the type put a negative amount on those lines, the
+          // posting validator rejected the entry, and the close failed
+          // outright — so any company that had recorded a single return could
+          // never close its year.
+          if (balance > 0n) {
             closingLines.push({ accountId: row.id, debitMinor: '0', creditMinor: balance.toString(), currency, memo: 'Year close' });
-            netIncome -= balance;
+          } else {
+            closingLines.push({ accountId: row.id, debitMinor: (-balance).toString(), creditMinor: '0', currency, memo: 'Year close' });
           }
+          // Net income is the credit side of revenue less the debit side of
+          // expense, which is exactly −bal summed over both — no type test
+          // needed, and it stays right for the contra accounts too.
+          netIncome -= balance;
         }
 
         if (netIncome > 0n) {

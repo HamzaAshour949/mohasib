@@ -20,8 +20,8 @@
     "smoke": "npm run build && node scripts/smoke-test.mjs",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
     "postinstall": "electron-builder install-app-deps",
-    "pack:mac": "npm run build && electron-builder --mac --arm64",
-    "pack:win": "npm run build && electron-builder --win --x64",
+    "pack:mac": "npm run build && node scripts/pack.mjs --mac --arm64",
+    "pack:win": "npm run build && node scripts/pack.mjs --win --x64",
     "seed:demo": "tsx scripts/seed-demo.ts"
   },
   "dependencies": {
