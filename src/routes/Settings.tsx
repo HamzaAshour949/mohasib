@@ -6,6 +6,7 @@ import type { Account, AppSettings } from '@shared/types';
 import { Btn, Card, Input, Label, Modal, Page, Select, Table } from '../components/ui';
 import { today } from '../lib/money';
 import { useNamesById } from '../lib/lookup';
+import { describeError } from '../lib/errors';
 
 interface PeriodLock { id: number; startDate: string; endDate: string; reason: string | null; lockedAt: string }
 interface ExpCat { id: number; code: string; name: string; nameEn: string | null; accountId: number }
@@ -22,7 +23,7 @@ export default function SettingsPage(): JSX.Element {
 
   const save = async () => {
     const r = await api.settings.save(s) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error || t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     setS({});
     void qc.invalidateQueries({ queryKey: ['settings'] });
     if (s.language && s.language !== i18n.language) {
@@ -81,9 +82,7 @@ export default function SettingsPage(): JSX.Element {
         </div>
       </Card>
       <Card className="mt-4 text-sm text-fg2 leading-relaxed">
-        {i18n.language === 'ar'
-          ? 'هذا التطبيق ملتزم بالمنهج السلفي ولا يدعم: الفوائد الربوية، الضرائب، أي مصاريف فائدة، أو أي حقول مرتبطة بها. الرسوم تعامَل كرسوم خدمات حلال محايدة.'
-          : 'This application is built without riba/interest, taxes, or any related fields. "Fees" are treated as neutral halal service fees only.'}
+        {t('halalPolicyNote')}
       </Card>
 
       <PeriodLocksSection />
@@ -102,7 +101,7 @@ const PeriodLocksSection: React.FC = () => {
 
   const save = async (): Promise<void> => {
     const r = await api.periodLocks.save(editing) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error ?? t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     setOpen(false); setEditing({});
     void qc.invalidateQueries({ queryKey: ['periodLocks'] });
   };
@@ -155,7 +154,7 @@ const ExpenseCategoriesSection: React.FC = () => {
 
   const save = async (): Promise<void> => {
     const r = await api.expenseCategories.save(editing) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error ?? t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     setOpen(false); setEditing({});
     void qc.invalidateQueries({ queryKey: ['expCats'] });
   };
@@ -218,7 +217,7 @@ const YearEndSection: React.FC = () => {
   const run = async (): Promise<void> => {
     if (!confirm(`${t('yearEndClose')} — ${closeDate}?`)) return;
     const r = await api.rollover.run({ closeDate, openDate }) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error ?? t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     alert(t('ok'));
     void qc.invalidateQueries();
   };

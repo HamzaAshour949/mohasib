@@ -411,7 +411,7 @@ const IncomeStatement: React.FC = () => {
       <RangeBar r={r} onRun={() => refetch()} />
       {data && (
         <Card>
-          <h3 className="font-semibold mb-2">{i18n.language === 'ar' ? 'الإيرادات' : 'Revenue'}</h3>
+          <h3 className="font-semibold mb-2">{t('revenues')}</h3>
           <table className="w-full text-sm mb-4">
             <tbody>
               {data.lines.filter(l => l.type === 'revenue').map((l, i) => (
@@ -420,7 +420,7 @@ const IncomeStatement: React.FC = () => {
               <tr className="border-t-2 border-line font-semibold"><td colSpan={2} className="py-2">{t('total')}</td><td className="text-end ltr-num">{formatMoney(data.totalRevenueMinor)}</td></tr>
             </tbody>
           </table>
-          <h3 className="font-semibold mb-2">{i18n.language === 'ar' ? 'المصروفات' : 'Expenses'}</h3>
+          <h3 className="font-semibold mb-2">{t('expensesTotal')}</h3>
           <table className="w-full text-sm mb-4">
             <tbody>
               {data.lines.filter(l => l.type === 'expense').map((l, i) => (
@@ -430,7 +430,7 @@ const IncomeStatement: React.FC = () => {
             </tbody>
           </table>
           <div className="text-lg font-bold text-accent">
-            {i18n.language === 'ar' ? 'صافي الدخل' : 'Net income'}: <span className="ltr-num">{formatMoney(data.netIncomeMinor)}</span>
+            {t('netIncome')}: <span className="ltr-num">{formatMoney(data.netIncomeMinor)}</span>
           </div>
         </Card>
       )}
@@ -468,10 +468,10 @@ const BalanceSheet: React.FC = () => {
       </div>
       {data && (
         <Card>
-          {section('asset', i18n.language === 'ar' ? 'الأصول' : 'Assets', t('total'), data.totalAssetsMinor)}
-          {section('liability', i18n.language === 'ar' ? 'الخصوم' : 'Liabilities', t('total'), data.totalLiabilitiesMinor)}
-          {section('equity', i18n.language === 'ar' ? 'حقوق الملكية' : 'Equity', t('total'), data.totalEquityMinor)}
-          <div className="text-sm text-fg2">+ {i18n.language === 'ar' ? 'صافي الدخل' : 'Net income'}: <span className="ltr-num">{formatMoney(data.netIncomeMinor)}</span></div>
+          {section('asset', t('assetsSection'), t('total'), data.totalAssetsMinor)}
+          {section('liability', t('liabilitiesSection'), t('total'), data.totalLiabilitiesMinor)}
+          {section('equity', t('equitySection'), t('total'), data.totalEquityMinor)}
+          <div className="text-sm text-fg2">+ {t('netIncome')}: <span className="ltr-num">{formatMoney(data.netIncomeMinor)}</span></div>
         </Card>
       )}
     </>

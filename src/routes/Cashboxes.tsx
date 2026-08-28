@@ -5,6 +5,7 @@ import { api } from '../lib/ipc';
 import type { Account, Cashbox } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Select, Table } from '../components/ui';
 import { useNamesById } from '../lib/lookup';
+import { describeError } from '../lib/errors';
 
 export default function CashboxesPage(): JSX.Element {
   const { t } = useTranslation();
@@ -20,7 +21,7 @@ export default function CashboxesPage(): JSX.Element {
 
   const save = async () => {
     const r = await api.cashboxes.save(editing) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error || t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     setOpen(false); setEditing({});
     void qc.invalidateQueries({ queryKey: ['cashboxes'] });
   };

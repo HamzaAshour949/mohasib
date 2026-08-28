@@ -6,6 +6,7 @@ import type { Account, Cashbox } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Select, Table } from '../components/ui';
 import { formatMoney, majorToMinor, today } from '../lib/money';
 import { useIndexById, useNamesById } from '../lib/lookup';
+import { describeError } from '../lib/errors';
 
 interface Employee { id: number; code: string; name: string; basicSalaryMinor: string; allowanceMinor: string; payableAccountId: number | null }
 interface Sheet {
@@ -51,7 +52,7 @@ export default function PayrollPage(): JSX.Element {
   };
 
   const save = async (): Promise<void> => {
-    if (!salaryAccountId || !payableAccountId || lines.length === 0) { alert('Required fields missing'); return; }
+    if (!salaryAccountId || !payableAccountId || lines.length === 0) { alert(t('requiredFieldsMissing')); return; }
     const cashbox = cashboxById.get(Number(paymentCashboxId));
     const r = await api.payroll.save({
       period, date, currency,
@@ -67,7 +68,7 @@ export default function PayrollPage(): JSX.Element {
         paidMinor: majorToMinor(l.paidMajor)
       }))
     }) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error ?? t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     setOpen(false); reset();
     void qc.invalidateQueries({ queryKey: ['payroll'] });
   };

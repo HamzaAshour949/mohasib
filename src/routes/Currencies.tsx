@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { api } from '../lib/ipc';
 import { Btn, Input, Label, Modal, Page, Table } from '../components/ui';
 import { today } from '../lib/money';
+import { describeError } from '../lib/errors';
 
 interface Currency { code: string; name: string; nameEn: string | null; symbol: string | null; isBase: number }
 interface FxRate { id: number; currency: string; date: string; rate: string }
@@ -21,20 +22,20 @@ export default function CurrenciesPage(): JSX.Element {
 
   const save = async (): Promise<void> => {
     const r = await api.currencies.save(editing) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error ?? t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     setOpen(false); setEditing({});
     void qc.invalidateQueries({ queryKey: ['currencies'] });
   };
   const remove = async (code: string): Promise<void> => {
     if (!confirm(t('confirmDelete'))) return;
     const r = await api.currencies.delete(code) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error ?? t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     void qc.invalidateQueries({ queryKey: ['currencies'] });
   };
 
   const fxSave = async (): Promise<void> => {
     const r = await api.currencies.fxSave(fxEditing) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error ?? t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     setFxOpen(false); setFxEditing({});
     void qc.invalidateQueries({ queryKey: ['fx'] });
   };

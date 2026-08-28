@@ -5,6 +5,7 @@ import { api } from '../lib/ipc';
 import type { Account } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Table } from '../components/ui';
 import { formatMoney, majorToMinor, minorToMajor } from '../lib/money';
+import { describeError } from '../lib/errors';
 
 interface Employee {
   id: number; code: string; name: string; nameEn: string | null;
@@ -36,14 +37,14 @@ export default function EmployeesPage(): JSX.Element {
       allowanceMinor: majorToMinor(editing.allowanceMajor ?? '0')
     };
     const r = await api.employees.save(payload) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error ?? t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     setOpen(false); setEditing({});
     void qc.invalidateQueries({ queryKey: ['employees'] });
   };
   const remove = async (id: number): Promise<void> => {
     if (!confirm(t('confirmDelete'))) return;
     const r = await api.employees.delete(id) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error ?? t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     void qc.invalidateQueries({ queryKey: ['employees'] });
   };
 

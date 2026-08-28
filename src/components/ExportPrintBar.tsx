@@ -29,7 +29,7 @@ export function ExportPrintBar<T>({ filename, title, rows, cols, printSummary }:
       </div>
       <table><thead>${head}</thead><tbody>${body}</tbody></table>
       ${printSummary ?? ''}
-      <div class="footer">${lang === 'ar' ? 'مُحاسب — تطبيق محاسبة بدون ربا أو ضرائب' : 'Mohasib — Riba-free, tax-free accounting'}</div>
+      <div class="footer">${escapeHtml(t('printFooter'))}</div>
     `;
     printHtml(title, html, lang);
   };

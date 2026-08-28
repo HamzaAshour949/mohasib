@@ -31,28 +31,28 @@ export default function Dashboard(): JSX.Element {
   const cur = 'USD';
   const today = new Date();
   const dateLine = i18n.language === 'ar'
-    ? `${today.toLocaleDateString('ar')} — ${gregorianToHijri(today)} هـ`
-    : today.toLocaleDateString('en');
+    ? `${today.toLocaleDateString('ar')} — ${gregorianToHijri(today)} ${tc('hijriSuffix')}`
+    : today.toLocaleDateString(i18n.language);
   return (
     <Page title={`${t('dashboard')} · ${dateLine}`}>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Tile label={i18n.language === 'ar' ? 'النقدية' : 'Cash'} value={formatMoney(data.cashMinor, cur)} />
-        <Tile label={i18n.language === 'ar' ? 'ذمم مدينة' : 'Receivable'} value={formatMoney(data.arMinor, cur)} />
-        <Tile label={i18n.language === 'ar' ? 'ذمم دائنة' : 'Payable'} value={formatMoney(data.apMinor, cur)} />
-        <Tile label={i18n.language === 'ar' ? 'صافي الدخل' : 'Net income'} value={formatMoney(data.netIncomeMinor, cur)} />
-        <Tile label={i18n.language === 'ar' ? 'إجمالي الأصول' : 'Total assets'} value={formatMoney(data.assetsMinor, cur)} />
-        <Tile label={i18n.language === 'ar' ? 'إجمالي الخصوم' : 'Total liabilities'} value={formatMoney(data.liabilitiesMinor, cur)} />
-        <Tile label={i18n.language === 'ar' ? 'حقوق الملكية' : 'Equity'} value={formatMoney(data.equityMinor, cur)} />
-        <Tile label={i18n.language === 'ar' ? 'عدد الفواتير' : 'Invoices'} value={String(data.invoicesCount)} />
+        <Tile label={tc('cashOnHand')} value={formatMoney(data.cashMinor, cur)} />
+        <Tile label={tc('receivable')} value={formatMoney(data.arMinor, cur)} />
+        <Tile label={tc('payable')} value={formatMoney(data.apMinor, cur)} />
+        <Tile label={tc('netIncome')} value={formatMoney(data.netIncomeMinor, cur)} />
+        <Tile label={tc('totalAssets')} value={formatMoney(data.assetsMinor, cur)} />
+        <Tile label={tc('totalLiabilities')} value={formatMoney(data.liabilitiesMinor, cur)} />
+        <Tile label={tc('totalEquity')} value={formatMoney(data.equityMinor, cur)} />
+        <Tile label={tc('invoicesCount')} value={String(data.invoicesCount)} />
       </div>
       <div className="mt-6">
-        <h3 className="text-sm font-semibold mb-2">{i18n.language === 'ar' ? 'أصناف منخفضة المخزون' : 'Low stock items'}</h3>
+        <h3 className="text-sm font-semibold mb-2">{tc('lowStockItems')}</h3>
         <Card>
           {data.lowStock.length === 0 ? (
             <div className="text-fg2 text-sm">{tc('noData')}</div>
           ) : (
             <table className="w-full text-sm">
-              <thead className="text-fg2 text-xs"><tr><th className="text-start py-1">{tc('code')}</th><th className="text-start">{tc('name')}</th><th className="text-end">{tc('qty')}</th><th className="text-end">Min</th></tr></thead>
+              <thead className="text-fg2 text-xs"><tr><th className="text-start py-1">{tc('code')}</th><th className="text-start">{tc('name')}</th><th className="text-end">{tc('qty')}</th><th className="text-end">{tc('minShort')}</th></tr></thead>
               <tbody>
                 {data.lowStock.map((s, i) => (
                   <tr key={i} className="border-t border-line"><td className="py-1.5">{s.code}</td><td>{s.name}</td><td className="text-end ltr-num">{s.qty}</td><td className="text-end ltr-num">{s.minQty}</td></tr>
@@ -63,7 +63,7 @@ export default function Dashboard(): JSX.Element {
         </Card>
       </div>
       <div className="mt-6 text-xs text-fg2">
-        {i18n.language === 'ar' ? 'هذا التطبيق متوافق مع المنهج السلفي: لا ربا، لا فوائد، لا ضرائب.' : 'This app is built without interest, riba, or tax workflows.'}
+        {tc('halalNote')}
       </div>
     </Page>
   );

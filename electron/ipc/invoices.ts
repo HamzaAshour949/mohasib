@@ -6,6 +6,7 @@ import { requirePeriodOpen } from '../services/period';
 import { INVOICE_COLS, INVOICE_LINE_COLS } from '../services/columns';
 import { valueOf, weightedAverage } from '@shared/domain/Inventory';
 import { addDays, isIsoDate } from '@shared/domain/Dates';
+import { AppError, toFailure } from '@shared/domain/errors';
 import type { Invoice, InvoiceLine, JournalEntryDto, JournalLineDto, SaveResult } from '@shared/types';
 
 interface InvoiceRow {
@@ -22,20 +23,20 @@ const SERIAL_PREFIX: Record<string, string> = {
 // Fetch a setting account by code; throws if missing.
 const acctIdByCode = (code: string): number => {
   const r = db().prepare(`SELECT id FROM accounts WHERE code = ?`).get(code) as { id: number } | undefined;
-  if (!r) throw new Error(`Required account ${code} missing`);
+  if (!r) throw new AppError('requiredAccountMissing', { code }, `Required account ${code} missing`);
   return r.id;
 };
 
 const partyAcct = (partyId: number, kind: 'ar'|'ap'): number => {
   const col = kind === 'ar' ? 'ar_account_id' : 'ap_account_id';
   const r = db().prepare(`SELECT ${col} AS id FROM parties WHERE id = ?`).get(partyId) as { id: number | null } | undefined;
-  if (!r || r.id == null) throw new Error('Party AR/AP account missing');
+  if (!r || r.id == null) throw new AppError(kind === 'ar' ? 'partyArAccountMissing' : 'partyApAccountMissing', {}, 'Party AR/AP account missing');
   return r.id;
 };
 
 const cashboxAcct = (cashboxId: number): number => {
   const r = db().prepare(`SELECT account_id FROM cashboxes WHERE id = ?`).get(cashboxId) as { account_id: number } | undefined;
-  if (!r) throw new Error('Cashbox missing');
+  if (!r) throw new AppError('cashboxMissing', {}, 'Cashbox missing');
   return r.account_id;
 };
 
@@ -117,7 +118,7 @@ export const registerInvoices = (): void => {
       let subtotal = 0n;
       const computedLines = inv.lines.map(l => {
         const qty = parseFloat(l.qty);
-        if (!l.itemId || qty <= 0) throw new Error('Invalid invoice line');
+        if (!l.itemId || !Number.isFinite(qty) || qty <= 0) throw new AppError('invalidLine', {}, 'Invalid invoice line');
         const unit = BigInt(l.unitPriceMinor || '0');
         const disc = BigInt(l.discountMinor || '0');
         const total = unit * BigInt(Math.round(qty * 100)) / 100n - disc;
@@ -129,7 +130,7 @@ export const registerInvoices = (): void => {
       const grand = subtotal - invDisc + fees;
       const prefix = SERIAL_PREFIX[inv.kind];
       if (!prefix) throw new Error(`Unknown invoice kind: ${inv.kind}`);
-      if (!isIsoDate(inv.date)) throw new Error(`Invalid invoice date: ${inv.date}`);
+      if (!isIsoDate(inv.date)) throw new AppError('invalidDate', { date: String(inv.date) }, `Invalid invoice date: ${inv.date}`);
 
       // Credit-limit + due-date enforcement (sale on credit only)
       let dueDate: string | null = inv.dueDate ?? null;
@@ -145,7 +146,11 @@ export const registerInvoices = (): void => {
             ).get(party.ar) as { bal: number };
             const newAr = BigInt(Math.round(balRow.bal)) + grand;
             if (newAr > BigInt(party.lim)) {
-              throw new Error(`Credit limit exceeded: new AR ${(Number(newAr) / 100).toFixed(2)} > limit ${(Number(BigInt(party.lim)) / 100).toFixed(2)}`);
+              throw new AppError(
+                'creditLimitExceeded',
+                { balance: (Number(newAr) / 100).toFixed(2), limit: (Number(BigInt(party.lim)) / 100).toFixed(2) },
+                `Credit limit exceeded: new AR ${(Number(newAr) / 100).toFixed(2)} > limit ${(Number(BigInt(party.lim)) / 100).toFixed(2)}`
+              );
             }
           }
           if (!dueDate && party.dd && party.dd > 0) {
@@ -262,7 +267,7 @@ export const registerInvoices = (): void => {
       audit('create', 'invoice', invoiceId, { serial, kind: inv.kind });
       return { ok: true, id: invoiceId };
     } catch (e) {
-      return { ok: false, error: (e as Error).message };
+      return toFailure(e);
     }
   };
   ipcMain.handle('invoices:save', (_e, inv: InvoiceInput) => invoiceSaveImpl(inv));

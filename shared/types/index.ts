@@ -165,8 +165,14 @@ export interface JournalEntryDto {
 export interface SaveResult {
   ok: boolean;
   id?: number;
+  /** Human-readable fallback. Prefer errorCode where one is present. */
   error?: string;
+  /** Translation key under the `errors` namespace, with errorParams. */
+  errorCode?: string;
+  errorParams?: Record<string, string | number>;
   warning?: string;
+  warningCode?: string;
+  warningParams?: Record<string, string | number>;
 }
 
 export interface AppSettings {

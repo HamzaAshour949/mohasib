@@ -9,15 +9,19 @@ import { exportRows } from '../lib/csv';
 import { printHtml, escapeHtml } from '../lib/print';
 import { useBarcodeScanner } from '../lib/barcode';
 import { useIndexById, useNamesById } from '../lib/lookup';
+import { describeError } from '../lib/errors';
 
 interface EditorLine { itemId: number; qty: string; unitMajor: string; discountMajor: string; }
 
-const KIND_LABELS: Record<InvoiceKind, { ar: string; en: string }> = {
-  sale: { ar: 'بيع', en: 'Sale' },
-  purchase: { ar: 'شراء', en: 'Purchase' },
-  sale_return: { ar: 'مردود بيع', en: 'Sale return' },
-  purchase_return: { ar: 'مردود شراء', en: 'Purchase return' }
+// Invoice kinds are already in the forms namespace; a private bilingual table
+// meant they had to be translated twice and could drift apart.
+const KIND_KEYS: Record<InvoiceKind, string> = {
+  sale: 'sale',
+  purchase: 'purchase',
+  sale_return: 'saleReturn',
+  purchase_return: 'purchaseReturn'
 };
+const INVOICE_KINDS = Object.keys(KIND_KEYS) as InvoiceKind[];
 
 export default function InvoicesPage(): JSX.Element {
   const { t, i18n } = useTranslation();
@@ -96,7 +100,7 @@ export default function InvoicesPage(): JSX.Element {
       const it = itemByBarcode.get(code) ?? itemByCode.get(code);
       if (!it) {
         // eslint-disable-next-line no-alert
-        alert(`${i18n.language === 'ar' ? 'لا يوجد صنف بالباركود' : 'No item for barcode'}: ${code}`);
+        alert(t('noItemForBarcode', { code }));
         return;
       }
       const def = kind === 'sale' || kind === 'sale_return' ? it.salePrices[0] : it.purchasePrices[0];
@@ -114,16 +118,16 @@ export default function InvoicesPage(): JSX.Element {
 
   const exportList = (): void => {
     exportRows(`invoices-${filter || 'all'}`, invoices, [
-      { header: 'Serial', value: r => r.serial },
-      { header: 'Date', value: r => r.date },
-      { header: 'Kind', value: r => r.kind },
-      { header: 'Party', value: r => partyName(r.partyId) },
-      { header: 'Payment', value: r => r.paymentMode },
-      { header: 'Currency', value: r => r.currency },
-      { header: 'Subtotal', value: r => minorToMajor(r.subtotalMinor) },
-      { header: 'Discount', value: r => minorToMajor(r.invDiscountMinor) },
-      { header: 'Fees', value: r => minorToMajor(r.feesMinor) },
-      { header: 'Grand total', value: r => minorToMajor(r.grandTotalMinor) }
+      { header: t('reference'), value: r => r.serial },
+      { header: t('date'), value: r => r.date },
+      { header: tf('kind'), value: r => tf(KIND_KEYS[r.kind]) },
+      { header: tf('party'), value: r => partyName(r.partyId) },
+      { header: t('paymentMode'), value: r => r.paymentMode === 'cash' ? t('cash') : t('creditMode') },
+      { header: t('currency'), value: r => r.currency },
+      { header: t('subtotal'), value: r => minorToMajor(r.subtotalMinor) },
+      { header: t('discount'), value: r => minorToMajor(r.invDiscountMinor) },
+      { header: t('fees'), value: r => minorToMajor(r.feesMinor) },
+      { header: t('grandTotal'), value: r => minorToMajor(r.grandTotalMinor) }
     ]);
   };
 
@@ -131,13 +135,13 @@ export default function InvoicesPage(): JSX.Element {
     const inv = await api.invoices.get(id) as (Invoice & { lines: Array<{ itemCode: string; itemName: string; qty: string; unitPriceMinor: string; discountMinor: string; totalMinor: string }> }) | undefined;
     if (!inv) return;
     const party = partyById.get(inv.partyId);
-    const lang = i18n.language === 'ar' ? 'ar' : 'en';
-    const kindLabel = KIND_LABELS[inv.kind][lang];
+    const lang = i18n.dir() === 'rtl' ? 'ar' : 'en';
+    const kindLabel = tf(KIND_KEYS[inv.kind]);
     const head = `
       <div class="header">
         <div><h2>${escapeHtml(kindLabel)} — <span class="num">${escapeHtml(inv.serial)}</span></h2>
-          <div class="meta">${lang === 'ar' ? 'التاريخ' : 'Date'}: <span class="num">${escapeHtml(inv.date)}</span></div>
-          <div class="meta">${lang === 'ar' ? 'الجهة' : 'Party'}: ${escapeHtml(party?.name ?? '')}</div>
+          <div class="meta">${escapeHtml(t('date'))}: <span class="num">${escapeHtml(inv.date)}</span></div>
+          <div class="meta">${escapeHtml(tf('party'))}: ${escapeHtml(party?.name ?? '')}</div>
         </div>
       </div>`;
     const linesHtml = inv.lines.map((l, i) => `
@@ -153,30 +157,30 @@ export default function InvoicesPage(): JSX.Element {
       ${head}
       <table>
         <thead><tr>
-          <th>#</th><th>${lang === 'ar' ? 'الصنف' : 'Item'}</th>
-          <th>${lang === 'ar' ? 'الكمية' : 'Qty'}</th>
-          <th>${lang === 'ar' ? 'سعر الوحدة' : 'Unit price'}</th>
-          <th>${lang === 'ar' ? 'الخصم' : 'Discount'}</th>
-          <th>${lang === 'ar' ? 'الإجمالي' : 'Total'}</th>
+          <th>#</th><th>${escapeHtml(tf('item'))}</th>
+          <th>${escapeHtml(t('qty'))}</th>
+          <th>${escapeHtml(t('unitPrice'))}</th>
+          <th>${escapeHtml(t('discount'))}</th>
+          <th>${escapeHtml(t('total'))}</th>
         </tr></thead>
         <tbody>${linesHtml}</tbody>
       </table>
       <table class="totals">
-        <tr><td class="label">${lang === 'ar' ? 'المجموع الفرعي' : 'Subtotal'}</td><td class="num">${escapeHtml(formatMoney(inv.subtotalMinor, inv.currency))}</td></tr>
-        <tr><td class="label">${lang === 'ar' ? 'الخصم' : 'Discount'}</td><td class="num">${escapeHtml(formatMoney(inv.invDiscountMinor, inv.currency))}</td></tr>
-        <tr><td class="label">${lang === 'ar' ? 'رسوم (توصيل)' : 'Fees (delivery)'}</td><td class="num">${escapeHtml(formatMoney(inv.feesMinor, inv.currency))}</td></tr>
-        <tr><td class="label"><b>${lang === 'ar' ? 'الإجمالي النهائي' : 'Grand total'}</b></td><td class="num"><b>${escapeHtml(formatMoney(inv.grandTotalMinor, inv.currency))}</b></td></tr>
+        <tr><td class="label">${escapeHtml(t('subtotal'))}</td><td class="num">${escapeHtml(formatMoney(inv.subtotalMinor, inv.currency))}</td></tr>
+        <tr><td class="label">${escapeHtml(t('discount'))}</td><td class="num">${escapeHtml(formatMoney(inv.invDiscountMinor, inv.currency))}</td></tr>
+        <tr><td class="label">${escapeHtml(t('fees'))}</td><td class="num">${escapeHtml(formatMoney(inv.feesMinor, inv.currency))}</td></tr>
+        <tr><td class="label"><b>${escapeHtml(t('grandTotal'))}</b></td><td class="num"><b>${escapeHtml(formatMoney(inv.grandTotalMinor, inv.currency))}</b></td></tr>
       </table>
-      ${inv.notes ? `<p>${lang === 'ar' ? 'ملاحظات' : 'Notes'}: ${escapeHtml(inv.notes)}</p>` : ''}
-      <div class="footer">${lang === 'ar' ? 'بدون ربا — بدون ضرائب' : 'No riba — No tax'}</div>
+      ${inv.notes ? `<p>${escapeHtml(tf('notes'))}: ${escapeHtml(inv.notes)}</p>` : ''}
+      <div class="footer">${escapeHtml(t('noRibaNoTax'))}</div>
     `;
     printHtml(`${kindLabel} ${inv.serial}`, body, lang);
   };
 
   const save = async () => {
-    if (!partyId || !warehouseId) { alert('Party + warehouse required'); return; }
-    if (paymentMode === 'cash' && !cashboxId) { alert('Cashbox required for cash invoice'); return; }
-    if (lines.length === 0) { alert('At least one line'); return; }
+    if (!partyId || !warehouseId) { alert(t('partyAndWarehouseRequired')); return; }
+    if (paymentMode === 'cash' && !cashboxId) { alert(t('cashboxRequiredForCash')); return; }
+    if (lines.length === 0) { alert(t('atLeastOneLine')); return; }
     const payload = {
       kind, date, partyId: Number(partyId), warehouseId: Number(warehouseId),
       paymentMode, cashboxId: paymentMode === 'cash' ? Number(cashboxId) : null,
@@ -192,7 +196,7 @@ export default function InvoicesPage(): JSX.Element {
       notes
     };
     const r = await api.invoices.save(payload) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error || t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     setOpen(false);
     void qc.invalidateQueries({ queryKey: ['invoices'] });
     void qc.invalidateQueries({ queryKey: ['dashboard'] });
@@ -204,8 +208,8 @@ export default function InvoicesPage(): JSX.Element {
       toolbar={
         <div className="flex gap-2">
           <Select value={filter} onChange={e => setFilter(e.target.value as InvoiceKind | '')}>
-            <option value="">{t('actions')} — {t('actions')}</option>
-            {(Object.keys(KIND_LABELS) as InvoiceKind[]).map(k => <option key={k} value={k}>{KIND_LABELS[k][i18n.language === 'ar' ? 'ar' : 'en']}</option>)}
+            <option value="">{t('allKinds')}</option>
+            {INVOICE_KINDS.map(k => <option key={k} value={k}>{tf(KIND_KEYS[k])}</option>)}
           </Select>
           <Btn variant="ghost" onClick={exportList}>{t('exportCsv')}</Btn>
           <Btn onClick={openNew}>{t('new')}</Btn>
@@ -217,9 +221,9 @@ export default function InvoicesPage(): JSX.Element {
         cols={[
           { key: 'serial', header: t('reference'), className: 'ltr-num w-32' },
           { key: 'date', header: t('date'), className: 'ltr-num w-28' },
-          { key: 'kind', header: tf('kind'), render: r => KIND_LABELS[r.kind][i18n.language === 'ar' ? 'ar' : 'en'] },
+          { key: 'kind', header: tf('kind'), render: r => tf(KIND_KEYS[r.kind]) },
           { key: 'partyId', header: tf('party'), render: r => partyName(r.partyId) },
-          { key: 'paymentMode', header: tf('kind'), render: r => r.paymentMode === 'cash' ? t('cash') : t('creditMode') },
+          { key: 'paymentMode', header: t('paymentMode'), render: r => r.paymentMode === 'cash' ? t('cash') : t('creditMode') },
           { key: 'grandTotalMinor', header: t('grandTotal'), className: 'ltr-num text-end',
             render: r => formatMoney(r.grandTotalMinor, r.currency) },
           { key: 'id', header: '', className: 'w-24 text-center',
@@ -227,12 +231,12 @@ export default function InvoicesPage(): JSX.Element {
         ]}
       />
 
-      <Modal open={open} onClose={() => setOpen(false)} title={t('new') + ' — ' + KIND_LABELS[kind][i18n.language === 'ar' ? 'ar' : 'en']} wide>
+      <Modal open={open} onClose={() => setOpen(false)} title={`${t('new')} — ${tf(KIND_KEYS[kind])}`} wide>
         <div className="grid grid-cols-4 gap-3">
           <div>
             <Label>{tf('kind')}</Label>
             <Select value={kind} onChange={e => setKind(e.target.value as InvoiceKind)}>
-              {(Object.keys(KIND_LABELS) as InvoiceKind[]).map(k => <option key={k} value={k}>{KIND_LABELS[k][i18n.language === 'ar' ? 'ar' : 'en']}</option>)}
+              {INVOICE_KINDS.map(k => <option key={k} value={k}>{tf(KIND_KEYS[k])}</option>)}
             </Select>
           </div>
           <div><Label>{t('date')}</Label><Input className="ltr-num" type="date" value={date} onChange={e => setDate(e.target.value)} /></div>
@@ -251,7 +255,7 @@ export default function InvoicesPage(): JSX.Element {
             </Select>
           </div>
           <div>
-            <Label>{tf('kind')} ({t('cash')}/{t('creditMode')})</Label>
+            <Label>{t('paymentMode')}</Label>
             <Select value={paymentMode} onChange={e => setPaymentMode(e.target.value as PaymentMode)}>
               <option value="cash">{t('cash')}</option>
               <option value="credit">{t('creditMode')}</option>

@@ -7,6 +7,7 @@ import { api } from './lib/ipc';
 import { runViewAction } from './lib/view-actions';
 import { confirmDiscard } from './lib/dirty';
 import type { MenuMessage } from '@shared/ipc-channels';
+import { describeError } from './lib/errors';
 
 // Every route was imported eagerly into a single 756 kB startup chunk, so
 // opening the dashboard downloaded and parsed the reports module, the
@@ -76,11 +77,14 @@ const NAV: Array<{ to: string; key: string }> = [
 
 const Sidebar: React.FC = () => {
   const { t, i18n } = useTranslation('nav');
-  const dir = i18n.language === 'ar' ? 'border-l' : 'border-r';
+  const tc = useTranslation().t;
+  // The sidebar sits on the inline-start edge, so its divider swaps sides with
+  // the document direction.
+  const dir = i18n.dir() === 'rtl' ? 'border-l' : 'border-r';
   return (
     <aside className={`w-56 shrink-0 bg-panel ${dir} border-line flex flex-col`}>
       <Link to="/" className="px-4 py-4 text-lg font-bold text-accent">
-        {i18n.language === 'ar' ? 'محاسب' : 'Mohasib'}
+        {tc('appName')}
       </Link>
       <nav className="flex-1 overflow-y-auto px-2 py-2 space-y-1">
         {NAV.map(n => (
@@ -100,7 +104,7 @@ const Sidebar: React.FC = () => {
       </nav>
       <div className="px-3 py-3 border-t border-line text-xs text-fg2">
         <div className="flex items-center justify-between">
-          <span>{i18n.language === 'ar' ? 'بدون ربا · بدون ضرائب' : 'No interest · No taxes'}</span>
+          <span>{tc('tagline')}</span>
         </div>
       </div>
     </aside>
@@ -145,7 +149,7 @@ export default function App(): JSX.Element {
       case 'backup': {
         const r = await api.backup.save() as { ok: boolean; error?: string; path?: string };
         if (r.ok) alert(`${t('backupDone')}: ${r.path ?? ''}`);
-        else if (r.error !== 'cancelled') alert(r.error ?? t('error'));
+        else if (r.error !== 'cancelled') alert(describeError(t, r));
         return;
       }
       case 'restore': {
@@ -155,7 +159,7 @@ export default function App(): JSX.Element {
           // on screen now belongs to a database that no longer exists.
           await queryClient.invalidateQueries();
           alert(t('restoreDone'));
-        } else if (r.error !== 'cancelled') alert(r.error ?? t('error'));
+        } else if (r.error !== 'cancelled') alert(describeError(t, r));
         return;
       }
       case 'export':

@@ -4,6 +4,7 @@ import { audit } from '../services/audit';
 import { postJournal, reverseJournal } from '../services/posting';
 import { requirePeriodOpen } from '../services/period';
 import { JOURNAL_COLS, JLINE_COLS } from '../services/columns';
+import { toFailure } from '@shared/domain/errors';
 import type { JournalEntryDto, SaveResult } from '@shared/types';
 
 export const registerJournal = (): void => {
@@ -29,7 +30,7 @@ export const registerJournal = (): void => {
   });
 
   ipcMain.handle('journal:save', (_e, je: JournalEntryDto): SaveResult => {
-    try { requirePeriodOpen(je.date); } catch (e) { return { ok: false, error: (e as Error).message }; }
+    try { requirePeriodOpen(je.date); } catch (e) { return toFailure(e); }
     const r = postJournal(je);
     if (!r.ok) return { ok: false, error: (r.errors ?? []).join('; ') };
     audit('create', 'journal', r.entryId!, { ref: je.reference });
@@ -40,12 +41,19 @@ export const registerJournal = (): void => {
     // A reversal is a posting like any other, and it was the one posting path
     // that skipped the period check — so a locked period could still be
     // written to by reversing an entry into it.
-    try { requirePeriodOpen(args.date); } catch (e) { return { ok: false, error: (e as Error).message }; }
+    try { requirePeriodOpen(args.date); } catch (e) { return toFailure(e); }
 
     const already = db().prepare(
       `SELECT id FROM journal_entries WHERE source_type='reversal' AND source_id=? LIMIT 1`
     ).get(args.id) as { id: number } | undefined;
-    if (already) return { ok: false, error: `Entry #${args.id} was already reversed by #${already.id}` };
+    if (already) {
+      return {
+        ok: false,
+        error: `Entry #${args.id} was already reversed by #${already.id}`,
+        errorCode: 'alreadyReversed',
+        errorParams: { id: args.id, reversalId: already.id }
+      };
+    }
 
     const r = reverseJournal(args.id, args.date, args.memo);
     if (!r.ok) return { ok: false, error: (r.errors ?? []).join('; ') };

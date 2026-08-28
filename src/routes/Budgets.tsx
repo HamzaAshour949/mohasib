@@ -5,6 +5,7 @@ import { api } from '../lib/ipc';
 import type { Account } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Select, Table } from '../components/ui';
 import { formatMoney, majorToMinor } from '../lib/money';
+import { describeError } from '../lib/errors';
 
 interface BudgetRow {
   id: number; accountId: number; period: string; amountMinor: string; notes: string | null;
@@ -30,7 +31,7 @@ export default function BudgetsPage(): JSX.Element {
       accountId: Number(editing.accountId),
       amountMinor: majorToMinor(amountMajor)
     }) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error ?? t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     setOpen(false); setEditing({ period: currentMonth, amountMinor: '0' }); setAmountMajor('0');
     void qc.invalidateQueries({ queryKey: ['budgets'] });
   };

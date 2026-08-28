@@ -6,6 +6,7 @@ import type { Cashbox, Cheque, ChequeStatus, Party } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Select, Table } from '../components/ui';
 import { formatMoney, majorToMinor, today } from '../lib/money';
 import { useNamesById } from '../lib/lookup';
+import { describeError } from '../lib/errors';
 
 export default function ChequesPage(): JSX.Element {
   const { t } = useTranslation();
@@ -25,19 +26,19 @@ export default function ChequesPage(): JSX.Element {
   const { data: banks = [] } = useQuery<Array<{ id: number; name: string; branch: string | null }>>({ queryKey: ['banks'], queryFn: () => api.banks.list() as Promise<Array<{ id: number; name: string; branch: string | null }>> });
 
   const save = async () => {
-    if (!editing.partyId || !editing.number) { alert('Party + number required'); return; }
+    if (!editing.partyId || !editing.number) { alert(t('partyAndNumberRequired')); return; }
     const r = await api.cheques.save({
       ...editing,
       amountMinor: majorToMinor(amountMajor)
     }) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error || t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     setOpen(false); setEditing({ direction: 'in', date: today(), dueDate: today(), currency: 'USD' }); setAmountMajor('0');
     void qc.invalidateQueries({ queryKey: ['cheques'] });
   };
 
   const transition = async (c: Cheque, to: ChequeStatus) => {
     const r = await api.cheques.transition({ id: c.id!, toStatus: to, date: today() }) as { ok: boolean; error?: string };
-    if (!r.ok) alert(r.error || t('error'));
+    if (!r.ok) alert(describeError(t, r));
     else void qc.invalidateQueries({ queryKey: ['cheques'] });
   };
 

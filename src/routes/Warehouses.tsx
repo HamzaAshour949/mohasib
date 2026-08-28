@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { api } from '../lib/ipc';
 import type { Warehouse } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Table } from '../components/ui';
+import { describeError } from '../lib/errors';
 
 export default function WarehousesPage(): JSX.Element {
   const { t } = useTranslation();
@@ -16,7 +17,7 @@ export default function WarehousesPage(): JSX.Element {
 
   const save = async () => {
     const r = await api.warehouses.save(editing) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error || t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     setOpen(false); setEditing({});
     void qc.invalidateQueries({ queryKey: ['warehouses'] });
   };

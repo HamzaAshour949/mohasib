@@ -8,6 +8,7 @@ import { db, dbPath, openCompany, closeDb } from '../services/db';
 import { runMigrations } from '../services/migrations';
 import { assertRestorableDatabase, dropWalSidecars, replaceDatabaseFile } from '../services/sqlite-file';
 import { baseCurrency } from '../services/settings';
+import { AppError, toFailure } from '@shared/domain/errors';
 import { QTY_SCALE, scaleQty, valueOf, weightedAverage } from '@shared/domain/Inventory';
 import { isIsoDate, today } from '@shared/domain/Dates';
 import { saveInvoiceCore } from './invoices';
@@ -26,7 +27,7 @@ const acctIdByCode = (code: string): number | null => {
 
 const requireAcct = (code: string): number => {
   const id = acctIdByCode(code);
-  if (id == null) throw new Error(`Required account ${code} missing`);
+  if (id == null) throw new AppError('requiredAccountMissing', { code }, `Required account ${code} missing`);
   return id;
 };
 
@@ -231,7 +232,7 @@ export const registerStockMovements = (): void => {
       if (m.kind === 'adjust_out' && !m.fromWarehouseId) return { ok: false, error: 'Adjust-out needs warehouse' };
       if (m.kind === 'opening' && !m.toWarehouseId) return { ok: false, error: 'Opening needs warehouse' };
 
-      if (!isIsoDate(m.date)) return { ok: false, error: `Invalid date: ${m.date}` };
+      if (!isIsoDate(m.date)) return { ok: false, error: `Invalid date: ${m.date}`, errorCode: 'invalidDate', errorParams: { date: String(m.date) } };
       const prefix = m.kind === 'transfer' ? 'TRF' : m.kind === 'adjust_in' ? 'ADI' : m.kind === 'adjust_out' ? 'ADO' : 'OPN';
       const currency = baseCurrency();
       let movementId = 0;
@@ -247,7 +248,7 @@ export const registerStockMovements = (): void => {
         const insLine = db().prepare(`INSERT INTO stock_movement_lines (movement_id, item_id, qty, unit_cost_minor) VALUES (?, ?, ?, ?)`);
         for (const l of m.lines) {
           const qty = parseFloat(l.qty);
-          if (qty <= 0) throw new Error('Line qty must be positive');
+          if (!Number.isFinite(qty) || qty <= 0) throw new AppError('lineQtyMustBePositive', {}, 'Line qty must be positive');
           insLine.run(movementId, l.itemId, l.qty, l.unitCostMinor ?? '0');
 
           if (m.kind === 'transfer') {
@@ -302,7 +303,7 @@ export const registerStockMovements = (): void => {
       audit('create', 'stock_movement', movementId, { serial, kind: m.kind });
       return { ok: true, id: movementId };
     } catch (e) {
-      return { ok: false, error: (e as Error).message };
+      return toFailure(e);
     }
   });
 };
@@ -381,7 +382,7 @@ export const registerManufacturing = (): void => {
       audit(f.id ? 'update' : 'create', 'manufacturing_formula', id);
       return { ok: true, id };
     } catch (e) {
-      return { ok: false, error: (e as Error).message };
+      return toFailure(e);
     }
   });
 
@@ -409,7 +410,7 @@ export const registerManufacturing = (): void => {
   ipcMain.handle('mfg:runs:save', (_e, m: ManufactureInput): SaveResult => {
     try {
       requirePeriodOpen(m.date);
-      if (!isIsoDate(m.date)) return { ok: false, error: `Invalid date: ${m.date}` };
+      if (!isIsoDate(m.date)) return { ok: false, error: `Invalid date: ${m.date}`, errorCode: 'invalidDate', errorParams: { date: String(m.date) } };
       const outQty = parseFloat(m.outputQty);
       if (!m.formulaId || !m.warehouseId || !Number.isFinite(outQty) || outQty <= 0) {
         return { ok: false, error: 'Formula, warehouse, and output quantity are required' };
@@ -433,7 +434,11 @@ export const registerManufacturing = (): void => {
       });
       for (const component of components) {
         const available = stockQty(component.itemId, m.warehouseId);
-        if (available + 0.000001 < component.qty) throw new Error(`Insufficient stock for component #${component.itemId}`);
+        if (available + 0.000001 < component.qty) {
+          const item = db().prepare('SELECT code, name FROM items WHERE id=?').get(component.itemId) as { code: string; name: string } | undefined;
+          const label = item ? `${item.code} ${item.name}` : `#${component.itemId}`;
+          throw new AppError('insufficientStock', { item: label }, `Insufficient stock for component ${label}`);
+        }
       }
 
       let serial = '';
@@ -487,7 +492,7 @@ export const registerManufacturing = (): void => {
       audit('create', 'manufacturing_run', runId, { serial, formulaId: m.formulaId });
       return { ok: true, id: runId };
     } catch (e) {
-      return { ok: false, error: (e as Error).message };
+      return toFailure(e);
     }
   });
 };
@@ -523,7 +528,7 @@ export const registerBudgets = (): void => {
       audit('create', 'account_budget', id);
       return { ok: true, id };
     } catch (e) {
-      return { ok: false, error: (e as Error).message };
+      return toFailure(e);
     }
   });
 
@@ -613,7 +618,7 @@ export const registerQuotes = (): void => {
       let subtotal = 0n;
       const computed = qIn.lines.map(l => {
         const qty = parseFloat(l.qty);
-        if (qty <= 0) throw new Error('Invalid quote line');
+        if (!Number.isFinite(qty) || qty <= 0) throw new AppError('invalidLine', {}, 'Invalid quote line');
         const unit = BigInt(l.unitPriceMinor || '0');
         const disc = BigInt(l.discountMinor || '0');
         const total = unit * BigInt(Math.round(qty * 100)) / 100n - disc;
@@ -641,7 +646,7 @@ export const registerQuotes = (): void => {
       audit('create', 'quote', qid, { serial, kind: qIn.kind });
       return { ok: true, id: qid };
     } catch (e) {
-      return { ok: false, error: (e as Error).message };
+      return toFailure(e);
     }
   });
 
@@ -700,7 +705,7 @@ export const registerOrders = (): void => {
       let subtotal = 0n;
       const computed = o.lines.map(l => {
         const qty = parseFloat(l.qty);
-        if (qty <= 0) throw new Error('Invalid order line');
+        if (!Number.isFinite(qty) || qty <= 0) throw new AppError('invalidLine', {}, 'Invalid order line');
         const unit = BigInt(l.unitPriceMinor || '0');
         const disc = BigInt(l.discountMinor || '0');
         const total = unit * BigInt(Math.round(qty * 100)) / 100n - disc;
@@ -728,7 +733,7 @@ export const registerOrders = (): void => {
       audit('create', 'order', oid, { serial, kind: o.kind });
       return { ok: true, id: oid };
     } catch (e) {
-      return { ok: false, error: (e as Error).message };
+      return toFailure(e);
     }
   });
 
@@ -762,7 +767,7 @@ const buildInvoiceFromDoc = (
   lines: DocLineRow[],
   args: ConvertArgs
 ): SaveResult => {
-  if (!args.warehouseId) throw new Error('A warehouse is required to convert this document');
+  if (!args.warehouseId) throw new AppError('warehouseRequired', {}, 'A warehouse is required to convert this document');
   return saveInvoiceCore({
     kind: hdr.kind, // 'sale' | 'purchase'
     date: args.date ?? today(),
@@ -797,7 +802,7 @@ export const registerDocConversions = (): void => {
                                 FROM quotes WHERE id=?`).get(args.id) as
           (DocHeader & { status: string }) | undefined;
         if (!q) throw new Error('Quote not found');
-        if (q.status !== 'open') throw new Error(`Quote already ${q.status}`);
+        if (q.status !== 'open') throw new AppError('documentAlreadyProcessed', { status: q.status }, `Quote already ${q.status}`);
         const lines = db().prepare(`SELECT item_id AS itemId, qty,
                                             unit_price_minor AS unitPriceMinor,
                                             discount_minor AS discountMinor
@@ -811,7 +816,7 @@ export const registerDocConversions = (): void => {
       audit('convert', 'quote', args.id, { invoiceId });
       return { ok: true, id: invoiceId };
     } catch (e) {
-      return { ok: false, error: (e as Error).message };
+      return toFailure(e);
     }
   });
 
@@ -825,7 +830,7 @@ export const registerDocConversions = (): void => {
                                 FROM orders WHERE id=?`).get(args.id) as
           (DocHeader & { status: string; warehouseId: number | null }) | undefined;
         if (!o) throw new Error('Order not found');
-        if (o.status === 'cancelled' || o.status === 'fulfilled') throw new Error(`Order already ${o.status}`);
+        if (o.status === 'cancelled' || o.status === 'fulfilled') throw new AppError('documentAlreadyProcessed', { status: o.status }, `Order already ${o.status}`);
         const lines = db().prepare(`SELECT item_id AS itemId, qty,
                                             unit_price_minor AS unitPriceMinor,
                                             discount_minor AS discountMinor
@@ -842,7 +847,7 @@ export const registerDocConversions = (): void => {
       audit('convert', 'order', args.id, { invoiceId });
       return { ok: true, id: invoiceId };
     } catch (e) {
-      return { ok: false, error: (e as Error).message };
+      return toFailure(e);
     }
   });
 };
@@ -880,9 +885,9 @@ export const registerExpenseVouchers = (): void => {
     try {
       requirePeriodOpen(x.date);
       const cashbox = db().prepare(`SELECT account_id FROM cashboxes WHERE id=?`).get(x.cashboxId) as { account_id: number } | undefined;
-      if (!cashbox) throw new Error('Cashbox missing');
+      if (!cashbox) throw new AppError('cashboxMissing', {}, 'Cashbox missing');
       const amount = BigInt(x.amountMinor);
-      if (amount <= 0n) throw new Error('Expense amount must be positive');
+      if (amount <= 0n) throw new AppError('amountMustBePositive', {}, 'Expense amount must be positive');
       let vid = 0;
       let jid = 0;
       let serial = '';
@@ -927,7 +932,7 @@ export const registerExpenseVouchers = (): void => {
       audit('create', 'expense', vid, { serial });
       return { ok: true, id: vid };
     } catch (e) {
-      return { ok: false, error: (e as Error).message };
+      return toFailure(e);
     }
   });
 };
@@ -1079,7 +1084,7 @@ export const registerPayroll = (): void => {
       audit('create', 'payroll', sid, { serial });
       return { ok: true, id: sid };
     } catch (e) {
-      return { ok: false, error: (e as Error).message };
+      return toFailure(e);
     }
   });
 };
@@ -1188,7 +1193,7 @@ export const registerAssets = (): void => {
 
       return { ok: true, id: runId };
     } catch (e) {
-      return { ok: false, error: (e as Error).message };
+      return toFailure(e);
     }
   });
 
@@ -1239,7 +1244,7 @@ export const registerBackup = (): void => {
       await db().backup(res.filePath);
       return { ok: true, path: res.filePath };
     } catch (e) {
-      return { ok: false, error: (e as Error).message };
+      return toFailure(e);
     }
   });
 
@@ -1442,7 +1447,7 @@ export const registerRollover = (): void => {
       audit('rollover', 'journal', entryId ?? null, { closeDate: args.closeDate });
       return { ok: true, id: entryId };
     } catch (e) {
-      return { ok: false, error: (e as Error).message };
+      return toFailure(e);
     }
   });
 };
@@ -1515,7 +1520,7 @@ export const registerNotes = (): void => {
       const prefix = NOTE_PREFIX[n.kind];
       if (!prefix) throw new Error(`Unknown note kind: ${n.kind}`);
       const amount = BigInt(n.amountMinor);
-      if (amount <= 0n) throw new Error('Note amount must be positive');
+      if (amount <= 0n) throw new AppError('amountMustBePositive', {}, 'Note amount must be positive');
       let nid = 0;
       let jid = 0;
       let serial = '';
@@ -1538,19 +1543,19 @@ export const registerNotes = (): void => {
         // debit_supplier: Dr supplier AP / Cr offset (we charge back the supplier — reduces AP)
         // credit_supplier: Dr offset / Cr supplier AP (extra charge from supplier — increases AP)
         if (n.kind === 'debit_customer') {
-          if (party.ar == null) throw new Error('Customer missing AR account');
+          if (party.ar == null) throw new AppError('partyArAccountMissing', {}, 'Customer missing AR account');
           lines.push({ accountId: party.ar, debitMinor: amount.toString(), creditMinor: '0', currency: n.currency, memo: `Debit note ${serial}` });
           lines.push({ accountId: n.accountId, debitMinor: '0', creditMinor: amount.toString(), currency: n.currency, memo: `Debit note ${serial}` });
         } else if (n.kind === 'credit_customer') {
-          if (party.ar == null) throw new Error('Customer missing AR account');
+          if (party.ar == null) throw new AppError('partyArAccountMissing', {}, 'Customer missing AR account');
           lines.push({ accountId: n.accountId, debitMinor: amount.toString(), creditMinor: '0', currency: n.currency, memo: `Credit note ${serial}` });
           lines.push({ accountId: party.ar, debitMinor: '0', creditMinor: amount.toString(), currency: n.currency, memo: `Credit note ${serial}` });
         } else if (n.kind === 'debit_supplier') {
-          if (party.ap == null) throw new Error('Supplier missing AP account');
+          if (party.ap == null) throw new AppError('partyApAccountMissing', {}, 'Supplier missing AP account');
           lines.push({ accountId: party.ap, debitMinor: amount.toString(), creditMinor: '0', currency: n.currency, memo: `Debit note ${serial}` });
           lines.push({ accountId: n.accountId, debitMinor: '0', creditMinor: amount.toString(), currency: n.currency, memo: `Debit note ${serial}` });
         } else if (n.kind === 'credit_supplier') {
-          if (party.ap == null) throw new Error('Supplier missing AP account');
+          if (party.ap == null) throw new AppError('partyApAccountMissing', {}, 'Supplier missing AP account');
           lines.push({ accountId: n.accountId, debitMinor: amount.toString(), creditMinor: '0', currency: n.currency, memo: `Credit note ${serial}` });
           lines.push({ accountId: party.ap, debitMinor: '0', creditMinor: amount.toString(), currency: n.currency, memo: `Credit note ${serial}` });
         }
@@ -1564,7 +1569,7 @@ export const registerNotes = (): void => {
       audit('create', 'note', nid, { kind: n.kind, serial });
       return { ok: true, id: nid };
     } catch (e) {
-      return { ok: false, error: (e as Error).message };
+      return toFailure(e);
     }
   });
 };
@@ -1605,13 +1610,13 @@ export const registerMultiVouchers = (): void => {
     try {
       requirePeriodOpen(v.date);
       const cashbox = db().prepare(`SELECT account_id FROM cashboxes WHERE id=?`).get(v.cashboxId) as { account_id: number } | undefined;
-      if (!cashbox) throw new Error('Cashbox missing');
+      if (!cashbox) throw new AppError('cashboxMissing', {}, 'Cashbox missing');
       let serial = '';
 
       let total = 0n;
       const computed = v.lines.map(l => {
         const amt = BigInt(l.amountMinor);
-        if (amt <= 0n) throw new Error('Invalid voucher line amount');
+        if (amt <= 0n) throw new AppError('amountMustBePositive', {}, 'Invalid voucher line amount');
         total += amt;
         return { partyId: l.partyId, amount: amt, memo: l.memo ?? null };
       });
@@ -1634,10 +1639,10 @@ export const registerMultiVouchers = (): void => {
             { ar: number | null; ap: number | null } | undefined;
           if (!party) throw new Error(`Party ${l.partyId} not found`);
           if (v.kind === 'receipt') {
-            if (party.ar == null) throw new Error('Party missing AR account');
+            if (party.ar == null) throw new AppError('partyArAccountMissing', {}, 'Party missing AR account');
             lines.push({ accountId: party.ar, debitMinor: '0', creditMinor: l.amount.toString(), currency: v.currency, memo: l.memo ?? `Receipt ${serial}` });
           } else {
-            if (party.ap == null) throw new Error('Party missing AP account');
+            if (party.ap == null) throw new AppError('partyApAccountMissing', {}, 'Party missing AP account');
             lines.push({ accountId: party.ap, debitMinor: l.amount.toString(), creditMinor: '0', currency: v.currency, memo: l.memo ?? `Payment ${serial}` });
           }
         }
@@ -1657,7 +1662,7 @@ export const registerMultiVouchers = (): void => {
       audit('create', 'multi_voucher', vid, { kind: v.kind, serial });
       return { ok: true, id: vid };
     } catch (e) {
-      return { ok: false, error: (e as Error).message };
+      return toFailure(e);
     }
   });
 };

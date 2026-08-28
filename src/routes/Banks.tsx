@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useState } from 'react';
 import { api } from '../lib/ipc';
 import { Btn, Input, Label, Modal, Page, Table } from '../components/ui';
+import { describeError } from '../lib/errors';
 
 interface Bank {
   id: number; code: string; name: string; nameEn: string | null;
@@ -21,7 +22,7 @@ export default function BanksPage(): JSX.Element {
 
   const save = async (): Promise<void> => {
     const r = await api.banks.save(editing) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error ?? t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     setOpen(false); setEditing({});
     void qc.invalidateQueries({ queryKey: ['banks'] });
   };

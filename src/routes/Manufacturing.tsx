@@ -5,6 +5,7 @@ import { api } from '../lib/ipc';
 import type { Item, Warehouse } from '@shared/types';
 import { Btn, Card, Input, Label, Modal, Page, Select, Table } from '../components/ui';
 import { today } from '../lib/money';
+import { describeError } from '../lib/errors';
 
 interface FormulaRow {
   id: number; code: string; name: string; outputItemId: number; outputQty: string;
@@ -39,19 +40,19 @@ export default function ManufacturingPage(): JSX.Element {
   };
   const saveFormula = async (): Promise<void> => {
     const r = await api.manufacturing.formulaSave(editing) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error ?? t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     setFormulaOpen(false); resetFormula();
     void qc.invalidateQueries({ queryKey: ['mfg-formulas'] });
   };
   const deleteFormula = async (id: number): Promise<void> => {
     if (!confirm(t('confirmDelete'))) return;
     const r = await api.manufacturing.formulaDelete(id) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error ?? t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     void qc.invalidateQueries({ queryKey: ['mfg-formulas'] });
   };
   const saveRun = async (): Promise<void> => {
     const r = await api.manufacturing.runSave(run) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error ?? t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     setRunOpen(false);
     setRun({ date: today(), formulaId: 0, warehouseId: 0, outputQty: '1', notes: '' });
     void qc.invalidateQueries({ queryKey: ['mfg-runs'] });

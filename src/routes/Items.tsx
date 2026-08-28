@@ -6,6 +6,7 @@ import type { Item } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Select, Table } from '../components/ui';
 import { formatMoney, majorToMinor, minorToMajor } from '../lib/money';
 import { exportRows } from '../lib/csv';
+import { describeError } from '../lib/errors';
 
 const empty: Partial<Item> = {
   code: '', name: '', unit: 'pcs', currency: 'USD',
@@ -29,7 +30,7 @@ export default function ItemsPage(): JSX.Element {
   const save = async () => {
     const payload = { ...empty, ...editing };
     const res = await api.items.save(payload) as { ok: boolean; error?: string };
-    if (!res.ok) { alert(res.error || t('error')); return; }
+    if (!res.ok) { alert(describeError(t, res)); return; }
     setOpen(false); setEditing(empty);
     void qc.invalidateQueries({ queryKey: ['items'] });
   };

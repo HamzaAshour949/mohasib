@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import { db } from '../services/db';
 import { audit } from '../services/audit';
 import { checkText } from '@shared/domain/Compliance';
+import { complianceFailure, complianceWarning } from '../services/compliance-result';
 import { ACCOUNT_COLS } from '../services/columns';
 import type { Account, SaveResult, AppSettings } from '@shared/types';
 
@@ -77,11 +78,12 @@ export const registerAccounts = (): void => {
       }
     }
 
-    const c1 = checkText(a.name ?? '', policyMode());
-    const c2 = checkText(a.nameEn ?? '', policyMode());
-    if (c1.blocked) return { ok: false, error: c1.warning };
-    if (c2.blocked) return { ok: false, error: c2.warning };
-    const warning = c1.warning ?? c2.warning;
+    const mode = policyMode();
+    const c1 = checkText(a.name ?? '', mode);
+    const c2 = checkText(a.nameEn ?? '', mode);
+    const blocked = c1.blocked ? c1 : c2.blocked ? c2 : null;
+    if (blocked) return complianceFailure(blocked);
+    const flagged = c1.matched ? c1 : c2.matched ? c2 : null;
 
     if (a.id) {
       db().prepare(`UPDATE accounts
@@ -89,14 +91,14 @@ export const registerAccounts = (): void => {
                     WHERE id=?`)
         .run(a.code, a.name, a.nameEn ?? null, a.type, a.parentCode ?? null, a.currency || 'USD', a.isActive ?? 1, a.id);
       audit('update', 'account', a.id, a);
-      return { ok: true, id: a.id, warning };
+      return { ok: true, id: a.id, ...complianceWarning(flagged) };
     }
     const r = db().prepare(`INSERT INTO accounts (code, name, name_en, type, parent_code, currency, is_active)
                             VALUES (?, ?, ?, ?, ?, ?, ?)`)
       .run(a.code, a.name, a.nameEn ?? null, a.type, a.parentCode ?? null, a.currency || 'USD', a.isActive ?? 1);
     const id = Number(r.lastInsertRowid);
     audit('create', 'account', id, a);
-    return { ok: true, id, warning };
+    return { ok: true, id, ...complianceWarning(flagged) };
   });
 
   ipcMain.handle('accounts:delete', (_e, id: number): SaveResult => {

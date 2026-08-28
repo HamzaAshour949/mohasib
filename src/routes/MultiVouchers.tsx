@@ -5,6 +5,7 @@ import { api } from '../lib/ipc';
 import type { Cashbox, Party } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Select, Table } from '../components/ui';
 import { formatMoney, majorToMinor, today } from '../lib/money';
+import { describeError } from '../lib/errors';
 
 interface MultiVoucher {
   id: number; kind: 'receipt' | 'payment'; serial: string; date: string;
@@ -41,15 +42,15 @@ export default function MultiVouchersPage(): JSX.Element {
   };
 
   const save = async (): Promise<void> => {
-    if (!cashboxId) { alert('Cashbox required'); return; }
+    if (!cashboxId) { alert(t('cashboxRequired')); return; }
     if (lines.length === 0 || lines.some(l => !l.partyId || !l.amountMajor)) {
-      alert('At least one party line with amount required'); return;
+      alert(t('atLeastOnePartyLine')); return;
     }
     const r = await api.multiVouchers.save({
       kind, date, cashboxId: Number(cashboxId), currency, notes,
       lines: lines.map(l => ({ partyId: Number(l.partyId), amountMinor: majorToMinor(l.amountMajor), memo: l.memo || null }))
     }) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error ?? t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     setOpen(false); reset();
     void qc.invalidateQueries({ queryKey: ['mvouchers'] });
   };

@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import { db } from '../services/db';
 import { audit } from '../services/audit';
 import { checkText } from '@shared/domain/Compliance';
+import { complianceFailure, complianceWarning } from '../services/compliance-result';
 import { baseCurrency } from '../services/settings';
 import { PARTY_COLS } from '../services/columns';
 import type { Party, SaveResult } from '@shared/types';
@@ -43,7 +44,7 @@ export const registerParties = (): void => {
 
   ipcMain.handle('parties:save', (_e, p: PartyInput): SaveResult => {
     const c = checkText(p.name ?? '', policyMode());
-    if (c.blocked) return { ok: false, error: c.warning };
+    if (c.blocked) return complianceFailure(c);
 
     return db().transaction(() => {
       let id: number;
@@ -80,7 +81,7 @@ export const registerParties = (): void => {
         .run(arId, apId, id);
 
       audit(p.id ? 'update' : 'create', 'party', id, p);
-      return { ok: true, id, warning: c.warning } as SaveResult;
+      return { ok: true, id, ...complianceWarning(c.matched ? c : null) } as SaveResult;
     })();
   });
 

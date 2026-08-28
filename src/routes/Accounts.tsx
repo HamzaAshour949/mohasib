@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { api } from '../lib/ipc';
 import type { Account, AppSettings } from '@shared/types';
 import { Btn, Card, Input, Label, Modal, Page, Select, Table } from '../components/ui';
+import { describeError } from '../lib/errors';
 
 export default function AccountsPage(): JSX.Element {
   const { t, i18n } = useTranslation();
@@ -21,7 +22,7 @@ export default function AccountsPage(): JSX.Element {
   const save = async () => {
     const payload = { ...editing, type: editing.type ?? 'asset', currency: editing.currency || settings?.defaultCurrency || 'USD' };
     const res = await api.accounts.save(payload) as { ok: boolean; id?: number; error?: string };
-    if (!res.ok) { alert(res.error || t('error')); return; }
+    if (!res.ok) { alert(describeError(t, res)); return; }
     setOpen(false); setEditing({});
     void qc.invalidateQueries({ queryKey: ['accounts'] });
   };
@@ -29,7 +30,7 @@ export default function AccountsPage(): JSX.Element {
   const remove = async (id: number) => {
     if (!confirm(t('delete') + '?')) return;
     const res = await api.accounts.delete(id) as { ok: boolean; error?: string };
-    if (!res.ok) alert(res.error || t('error'));
+    if (!res.ok) alert(describeError(t, res));
     else void qc.invalidateQueries({ queryKey: ['accounts'] });
   };
 
@@ -69,15 +70,15 @@ export default function AccountsPage(): JSX.Element {
             </Select>
           </div>
           <div className="col-span-2">
-            <Label>{i18n.language === 'ar' ? 'الاسم بالعربية' : 'Name (Arabic)'}</Label>
+            <Label>{tf('nameArabic')}</Label>
             <Input value={editing.name ?? ''} onChange={e => setEditing({ ...editing, name: e.target.value })} />
           </div>
           <div className="col-span-2">
-            <Label>{i18n.language === 'ar' ? 'الاسم بالإنجليزية' : 'Name (English)'}</Label>
+            <Label>{tf('nameEnglish')}</Label>
             <Input value={editing.nameEn ?? ''} onChange={e => setEditing({ ...editing, nameEn: e.target.value })} />
           </div>
           <div>
-            <Label>{i18n.language === 'ar' ? 'الحساب الأب' : 'Parent code'}</Label>
+            <Label>{tf('parentCode')}</Label>
             <Input value={editing.parentCode ?? ''} onChange={e => setEditing({ ...editing, parentCode: e.target.value })} />
           </div>
           <div>

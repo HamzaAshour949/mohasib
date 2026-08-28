@@ -52,5 +52,8 @@
   "removeLine": "حذف",
   "post": "ترحيل",
   "reverse": "عكس القيد",
-  "asOf": "حتى تاريخ"
+  "asOf": "حتى تاريخ",
+  "nameArabic": "الاسم بالعربية",
+  "nameEnglish": "الاسم بالإنجليزية",
+  "parentCode": "الحساب الأب"
 }

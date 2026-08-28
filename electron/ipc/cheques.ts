@@ -4,6 +4,7 @@ import { audit } from '../services/audit';
 import { postJournal, nextSerial } from '../services/posting';
 import { requirePeriodOpen } from '../services/period';
 import { CHEQUE_COLS } from '../services/columns';
+import { AppError, toFailure } from '@shared/domain/errors';
 import type { Cheque, ChequeStatus, JournalEntryDto, SaveResult } from '@shared/types';
 
 interface ChequeInput extends Partial<Cheque> {
@@ -22,19 +23,19 @@ interface ChequeInput extends Partial<Cheque> {
 const partyAcct = (partyId: number, kind: 'ar' | 'ap'): number => {
   const col = kind === 'ar' ? 'ar_account_id' : 'ap_account_id';
   const r = db().prepare(`SELECT ${col} AS id FROM parties WHERE id = ?`).get(partyId) as { id: number | null } | undefined;
-  if (!r || r.id == null) throw new Error('Party AR/AP account missing');
+  if (!r || r.id == null) throw new AppError(kind === 'ar' ? 'partyArAccountMissing' : 'partyApAccountMissing', {}, 'Party AR/AP account missing');
   return r.id;
 };
 
 const cashboxAcct = (cashboxId: number): number => {
   const r = db().prepare(`SELECT account_id FROM cashboxes WHERE id = ?`).get(cashboxId) as { account_id: number } | undefined;
-  if (!r) throw new Error('Cashbox missing');
+  if (!r) throw new AppError('cashboxMissing', {}, 'Cashbox missing');
   return r.account_id;
 };
 
 const acctIdByCode = (code: string): number => {
   const r = db().prepare(`SELECT id FROM accounts WHERE code = ?`).get(code) as { id: number } | undefined;
-  if (!r) throw new Error(`Required account ${code} missing`);
+  if (!r) throw new AppError('requiredAccountMissing', { code }, `Required account ${code} missing`);
   return r.id;
 };
 
@@ -53,7 +54,7 @@ export const registerCheques = (): void => {
       requirePeriodOpen(c.date);
       const initialStatus: ChequeStatus = c.direction === 'in' ? 'received' : 'issued';
       const amount = BigInt(c.amountMinor);
-      if (amount <= 0n) throw new Error('Cheque amount must be positive');
+      if (amount <= 0n) throw new AppError('amountMustBePositive', {}, 'Cheque amount must be positive');
       let chequeId = 0;
       let serial = '';
 
@@ -93,7 +94,7 @@ export const registerCheques = (): void => {
       audit('create', 'cheque', chequeId, { serial });
       return { ok: true, id: chequeId };
     } catch (e) {
-      return { ok: false, error: (e as Error).message };
+      return toFailure(e);
     }
   });
 
@@ -106,10 +107,9 @@ export const registerCheques = (): void => {
       // Settled cheques are done. Without this, transitioning an already
       // cleared cheque to 'cleared' again posted the settlement entry a
       // second time and doubled the cash.
-      if (TERMINAL_STATUSES.has(c.status)) {
-        return { ok: false, error: `Cheque is already ${c.status}` };
+      if (TERMINAL_STATUSES.has(c.status) || c.status === args.toStatus) {
+        return { ok: false, error: `Cheque is already ${c.status}`, errorCode: 'chequeAlreadySettled', errorParams: { status: c.status } };
       }
-      if (c.status === args.toStatus) return { ok: false, error: `Cheque is already ${c.status}` };
 
       db().transaction(() => {
         const amount = BigInt(c.amountMinor);
@@ -117,7 +117,7 @@ export const registerCheques = (): void => {
           // Incoming cheques
           if (c.direction === 'in') {
             if (args.toStatus === 'cleared') {
-              if (!c.cashboxId) throw new Error('Cashbox required to clear cheque');
+              if (!c.cashboxId) throw new AppError('cashboxRequired', {}, 'Cashbox required to clear cheque');
               return [
                 { accountId: cashboxAcct(c.cashboxId), debitMinor: amount.toString(), creditMinor: '0', currency: c.currency, memo: `Cheque cleared ${c.serial}` },
                 { accountId: acctIdByCode('1140'),     debitMinor: '0', creditMinor: amount.toString(), currency: c.currency, memo: `Cheque cleared ${c.serial}` }
@@ -131,7 +131,7 @@ export const registerCheques = (): void => {
             }
           } else {
             if (args.toStatus === 'paid') {
-              if (!c.cashboxId) throw new Error('Cashbox required to mark cheque paid');
+              if (!c.cashboxId) throw new AppError('cashboxRequired', {}, 'Cashbox required to mark cheque paid');
               return [
                 { accountId: acctIdByCode('2140'),     debitMinor: amount.toString(), creditMinor: '0', currency: c.currency, memo: `Cheque paid ${c.serial}` },
                 { accountId: cashboxAcct(c.cashboxId), debitMinor: '0', creditMinor: amount.toString(), currency: c.currency, memo: `Cheque paid ${c.serial}` }
@@ -164,7 +164,7 @@ export const registerCheques = (): void => {
       audit('transition', 'cheque', args.id, { to: args.toStatus });
       return { ok: true, id: args.id };
     } catch (e) {
-      return { ok: false, error: (e as Error).message };
+      return toFailure(e);
     }
   });
 };

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { api } from '../lib/ipc';
 import { Btn, Input, Label, Modal, Page, Table } from '../components/ui';
 import { useNamesById } from '../lib/lookup';
+import { describeError } from '../lib/errors';
 
 interface Project { id: number; code: string; name: string; nameEn: string | null; departmentId: number | null; isActive: number }
 interface Dept { id: number; code: string; name: string }
@@ -22,14 +23,14 @@ export default function ProjectsPage(): JSX.Element {
 
   const save = async (): Promise<void> => {
     const r = await api.projects.save(editing) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error ?? t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     setOpen(false); setEditing({});
     void qc.invalidateQueries({ queryKey: ['projects'] });
   };
   const remove = async (id: number): Promise<void> => {
     if (!confirm(t('confirmDelete'))) return;
     const r = await api.projects.delete(id) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error ?? t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     void qc.invalidateQueries({ queryKey: ['projects'] });
   };
 

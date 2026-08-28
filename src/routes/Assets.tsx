@@ -5,6 +5,7 @@ import { api } from '../lib/ipc';
 import type { Account } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Table } from '../components/ui';
 import { formatMoney, majorToMinor, minorToMajor, today } from '../lib/money';
+import { describeError } from '../lib/errors';
 
 interface Asset {
   id: number; code: string; name: string; nameEn: string | null; acqDate: string;
@@ -42,20 +43,20 @@ export default function AssetsPage(): JSX.Element {
       salvageMinor: majorToMinor(editing.salvageMajor ?? '0')
     };
     const r = await api.assets.save(payload) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error ?? t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     setOpen(false); setEditing({});
     void qc.invalidateQueries({ queryKey: ['assets'] });
   };
   const remove = async (id: number): Promise<void> => {
     if (!confirm(t('confirmDelete'))) return;
     const r = await api.assets.delete(id) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error ?? t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     void qc.invalidateQueries({ queryKey: ['assets'] });
   };
   const depreciate = async (): Promise<void> => {
     if (!depOpen) return;
     const r = await api.assets.depreciate({ assetId: depOpen.id, period: depPeriod, date: depDate }) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error ?? t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     setDepOpen(null);
     void qc.invalidateQueries({ queryKey: ['assets'] });
   };

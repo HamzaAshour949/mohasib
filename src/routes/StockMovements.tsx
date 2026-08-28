@@ -5,6 +5,7 @@ import { api } from '../lib/ipc';
 import type { Item, Warehouse } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Select, Table } from '../components/ui';
 import { majorToMinor, today } from '../lib/money';
+import { describeError } from '../lib/errors';
 
 interface SM {
   id: number; serial: string; date: string; kind: string;
@@ -39,11 +40,11 @@ export default function StockMovementsPage(): JSX.Element {
   const rm = (i: number): void => setLines(lines.filter((_, idx) => idx !== i));
 
   const save = async (): Promise<void> => {
-    if (lines.length === 0) { alert('At least one line'); return; }
+    if (lines.length === 0) { alert(t('atLeastOneLine')); return; }
     if (kind === 'count') {
       // Stock-count (جرد): user enters target qty per item; we compute diff against
       // current on-hand for the chosen warehouse and post adjust_in / adjust_out lines.
-      if (!toWarehouseId) { alert('Warehouse required for count'); return; }
+      if (!toWarehouseId) { alert(t('warehouseRequiredForCount')); return; }
       const wh = Number(toWarehouseId);
       const incLines: typeof lines = [];
       const decLines: typeof lines = [];
@@ -65,7 +66,7 @@ export default function StockMovementsPage(): JSX.Element {
       }));
       const results = await Promise.all(tasks) as Array<{ ok: boolean; error?: string }>;
       const fail = results.find(r => !r.ok);
-      if (fail) { alert(fail.error ?? t('error')); return; }
+      if (fail) { alert(describeError(t, fail)); return; }
       if (tasks.length === 0) { alert(t('noData')); return; }
       setOpen(false); reset();
       void qc.invalidateQueries({ queryKey: ['stockMovements'] });
@@ -79,7 +80,7 @@ export default function StockMovementsPage(): JSX.Element {
       lines: lines.map(l => ({ itemId: l.itemId, qty: l.qty, unitCostMinor: majorToMinor(l.costMajor) }))
     };
     const r = await api.stockMovements.save(payload) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error ?? t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     setOpen(false); reset();
     void qc.invalidateQueries({ queryKey: ['stockMovements'] });
     void qc.invalidateQueries({ queryKey: ['items'] });

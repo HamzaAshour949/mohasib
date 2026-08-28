@@ -5,6 +5,7 @@ import { api } from '../lib/ipc';
 import type { Item, Party, Warehouse, Cashbox } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Select, Table } from '../components/ui';
 import { formatMoney, majorToMinor, today } from '../lib/money';
+import { describeError } from '../lib/errors';
 
 interface Order {
   id: number; kind: 'sale' | 'purchase'; serial: string; date: string; dueDate: string | null;
@@ -47,7 +48,7 @@ export default function OrdersPage(): JSX.Element {
   };
 
   const save = async (): Promise<void> => {
-    if (!partyId || lines.length === 0) { alert('Party and at least one line required'); return; }
+    if (!partyId || lines.length === 0) { alert(t('partyAndOneLineRequired')); return; }
     const r = await api.orders.save({
       kind, date, dueDate: dueDate || null, partyId: Number(partyId),
       warehouseId: warehouseId ? Number(warehouseId) : null, currency,
@@ -55,7 +56,7 @@ export default function OrdersPage(): JSX.Element {
         unitPriceMinor: majorToMinor(l.unitMajor), discountMinor: majorToMinor(l.discMajor) })),
       discountMinor: majorToMinor(discMajor), feesMinor: majorToMinor(feesMajor), notes
     }) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error ?? t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     setOpen(false); reset();
     void qc.invalidateQueries({ queryKey: ['orders'] });
   };
@@ -73,12 +74,12 @@ export default function OrdersPage(): JSX.Element {
     setConvCb(cashboxes.find(c => c.isDefault)?.id ?? cashboxes[0]?.id ?? 0);
   };
   const doConvert = async (): Promise<void> => {
-    if (!convertId || !convWh) { alert('Warehouse required'); return; }
+    if (!convertId || !convWh) { alert(t('warehouseRequired')); return; }
     const r = await api.docConvert.order({
       id: convertId, warehouseId: convWh, paymentMode: convPay,
       cashboxId: convPay === 'cash' ? convCb : null
     }) as { ok: boolean; error?: string; id?: number };
-    if (!r.ok) { alert(r.error ?? t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     setConvertId(null);
     void qc.invalidateQueries({ queryKey: ['orders'] });
     void qc.invalidateQueries({ queryKey: ['invoices'] });

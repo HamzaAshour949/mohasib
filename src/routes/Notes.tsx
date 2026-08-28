@@ -5,6 +5,7 @@ import { api } from '../lib/ipc';
 import type { Party } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Select, Table } from '../components/ui';
 import { formatMoney, majorToMinor, today } from '../lib/money';
+import { describeError } from '../lib/errors';
 
 type NoteKind = 'debit_customer' | 'credit_customer' | 'debit_supplier' | 'credit_supplier';
 
@@ -45,12 +46,12 @@ export default function NotesPage(): JSX.Element {
   };
 
   const save = async (): Promise<void> => {
-    if (!partyId || !accountId) { alert('Party + offset account required'); return; }
+    if (!partyId || !accountId) { alert(t('partyAndOffsetAccountRequired')); return; }
     const r = await api.notes.save({
       kind, date, partyId: Number(partyId), accountId: Number(accountId),
       currency, amountMinor: majorToMinor(amountMajor), notes
     }) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error ?? t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     setOpen(false); reset();
     void qc.invalidateQueries({ queryKey: ['notes'] });
   };

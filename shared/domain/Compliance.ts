@@ -6,7 +6,8 @@ export type PolicyMode = 'strict' | 'warn';
 export interface ComplianceResult {
   ok: boolean;
   blocked: boolean; // true if strict mode rejected
-  warning?: string;
+  /** Translation key under `errors`, paired with `matched` as its parameter. */
+  code?: 'prohibitedTerm';
   matched?: string;
 }
 
@@ -80,9 +81,10 @@ export const checkText = (text: string, mode: PolicyMode = 'strict'): Compliance
   for (let i = 0; i < NORM_PROHIBITED.length; i++) {
     const kw = NORM_PROHIBITED[i];
     if (kw && wordBoundaryIncludes(norm, kw)) {
-      const matched = PROHIBITED[i];
-      const warning = `Contains prohibited term «${matched}» — riba/tax workflows are blocked. (يحتوي على مصطلح محظور «${matched}» — لا يدعم النظام الفوائد الربوية أو الضرائب.)`;
-      return { ok: mode === 'warn', blocked: mode === 'strict', warning, matched };
+      // The message used to be a hardcoded Arabic-and-English sentence built
+      // here, which meant the renderer showed both languages at once and
+      // neither could be adjusted without editing domain code.
+      return { ok: mode === 'warn', blocked: mode === 'strict', code: 'prohibitedTerm', matched: PROHIBITED[i] };
     }
   }
   return { ok: true, blocked: false };

@@ -52,5 +52,8 @@
   "removeLine": "Remove",
   "post": "Post",
   "reverse": "Reverse",
-  "asOf": "As of"
+  "asOf": "As of",
+  "nameArabic": "Name (Arabic)",
+  "nameEnglish": "Name (English)",
+  "parentCode": "Parent account"
 }

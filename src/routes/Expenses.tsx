@@ -5,6 +5,7 @@ import { api } from '../lib/ipc';
 import type { Account, Cashbox, Party } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Select, Table } from '../components/ui';
 import { formatMoney, majorToMinor, today } from '../lib/money';
+import { describeError } from '../lib/errors';
 
 interface Expense {
   id: number; serial: string; date: string; partyId: number | null; partyName: string | null;
@@ -49,7 +50,7 @@ export default function ExpensesPage(): JSX.Element {
   };
 
   const save = async (): Promise<void> => {
-    if (!expenseAccountId || !cashboxId) { alert('Account + cashbox required'); return; }
+    if (!expenseAccountId || !cashboxId) { alert(t('accountAndCashboxRequired')); return; }
     const r = await api.expenses.save({
       date, expenseAccountId: Number(expenseAccountId), cashboxId: Number(cashboxId),
       amountMinor: majorToMinor(amountMajor), currency,
@@ -59,7 +60,7 @@ export default function ExpensesPage(): JSX.Element {
       funderId: funderId ? Number(funderId) : null,
       notes
     }) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error ?? t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     setOpen(false); reset();
     void qc.invalidateQueries({ queryKey: ['expenses'] });
   };

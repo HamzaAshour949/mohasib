@@ -6,6 +6,7 @@ import type { Cashbox, Party, Voucher, VoucherKind } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Select, Table } from '../components/ui';
 import { formatMoney, majorToMinor, today } from '../lib/money';
 import { useNamesById } from '../lib/lookup';
+import { describeError } from '../lib/errors';
 
 export default function VouchersPage(): JSX.Element {
   const { t } = useTranslation();
@@ -32,12 +33,12 @@ export default function VouchersPage(): JSX.Element {
     : (p.kind === 'supplier' || p.kind === 'both' || p.kind === 'employee'));
 
   const save = async () => {
-    if (!partyId || !cashboxId) { alert('Party + cashbox required'); return; }
+    if (!partyId || !cashboxId) { alert(t('partyAndCashboxRequired')); return; }
     const r = await api.vouchers.save({
       kind, date, partyId: Number(partyId), cashboxId: Number(cashboxId), currency,
       amountMinor: majorToMinor(amountMajor), notes
     }) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error || t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     setOpen(false);
     void qc.invalidateQueries({ queryKey: ['vouchers'] });
   };

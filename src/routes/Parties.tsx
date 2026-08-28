@@ -5,6 +5,7 @@ import { api } from '../lib/ipc';
 import type { Party, PartyKind } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Select, Table } from '../components/ui';
 import { exportRows } from '../lib/csv';
+import { describeError } from '../lib/errors';
 
 export default function PartiesPage(): JSX.Element {
   const { t } = useTranslation();
@@ -22,7 +23,7 @@ export default function PartiesPage(): JSX.Element {
   const save = async () => {
     const payload = { ...editing, kind: editing.kind ?? 'customer' as PartyKind };
     const res = await api.parties.save(payload) as { ok: boolean; error?: string };
-    if (!res.ok) { alert(res.error || t('error')); return; }
+    if (!res.ok) { alert(describeError(t, res)); return; }
     setOpen(false); setEditing({});
     void qc.invalidateQueries({ queryKey: ['parties'] });
   };

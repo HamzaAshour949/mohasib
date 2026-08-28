@@ -4,6 +4,7 @@ import { audit } from '../services/audit';
 import { postJournal, nextSerial } from '../services/posting';
 import { requirePeriodOpen } from '../services/period';
 import { VOUCHER_COLS } from '../services/columns';
+import { AppError, toFailure } from '@shared/domain/errors';
 import type { Voucher, JournalEntryDto, SaveResult } from '@shared/types';
 
 interface VoucherInput extends Partial<Voucher> {
@@ -19,13 +20,13 @@ interface VoucherInput extends Partial<Voucher> {
 const partyAcct = (partyId: number, kind: 'ar' | 'ap'): number => {
   const col = kind === 'ar' ? 'ar_account_id' : 'ap_account_id';
   const r = db().prepare(`SELECT ${col} AS id FROM parties WHERE id = ?`).get(partyId) as { id: number | null } | undefined;
-  if (!r || r.id == null) throw new Error('Party AR/AP account missing');
+  if (!r || r.id == null) throw new AppError(kind === 'ar' ? 'partyArAccountMissing' : 'partyApAccountMissing', {}, 'Party AR/AP account missing');
   return r.id;
 };
 
 const cashboxAcct = (cashboxId: number): number => {
   const r = db().prepare(`SELECT account_id FROM cashboxes WHERE id = ?`).get(cashboxId) as { account_id: number } | undefined;
-  if (!r) throw new Error('Cashbox missing');
+  if (!r) throw new AppError('cashboxMissing', {}, 'Cashbox missing');
   return r.account_id;
 };
 
@@ -40,7 +41,7 @@ export const registerVouchers = (): void => {
     try {
       requirePeriodOpen(v.date);
       const amount = BigInt(v.amountMinor);
-      if (amount <= 0n) throw new Error('Voucher amount must be positive');
+      if (amount <= 0n) throw new AppError('amountMustBePositive', {}, 'Voucher amount must be positive');
       let voucherId = 0;
       let journalId = 0;
       let serial = '';
@@ -81,7 +82,7 @@ export const registerVouchers = (): void => {
       audit('create', 'voucher', voucherId, { serial, kind: v.kind });
       return { ok: true, id: voucherId };
     } catch (e) {
-      return { ok: false, error: (e as Error).message };
+      return toFailure(e);
     }
   });
 };

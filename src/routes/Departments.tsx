@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useState } from 'react';
 import { api } from '../lib/ipc';
 import { Btn, Input, Label, Modal, Page, Table } from '../components/ui';
+import { describeError } from '../lib/errors';
 
 interface Dept { id: number; code: string; name: string; nameEn: string | null; isActive: number }
 
@@ -16,14 +17,14 @@ export default function DepartmentsPage(): JSX.Element {
 
   const save = async (): Promise<void> => {
     const r = await api.departments.save(editing) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error ?? t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     setOpen(false); setEditing({});
     void qc.invalidateQueries({ queryKey: ['departments'] });
   };
   const remove = async (id: number): Promise<void> => {
     if (!confirm(t('confirmDelete'))) return;
     const r = await api.departments.delete(id) as { ok: boolean; error?: string };
-    if (!r.ok) { alert(r.error ?? t('error')); return; }
+    if (!r.ok) { alert(describeError(t, r)); return; }
     void qc.invalidateQueries({ queryKey: ['departments'] });
   };
 
