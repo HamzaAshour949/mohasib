@@ -1,0 +1,18 @@
+{
+  "//": "Renderer only. `types: []` keeps @types/node out. It is not a hard boundary: electron/preload.ts is listed below so the bridge stays single-sourced, and Electron's own .d.ts references the Node types, which drags NodeJS globals back in. The runtime guarantee is the sandbox itself, asserted by scripts/smoke-test.mjs — require, process and module are all undefined in the renderer. The boundary that this config does enforce is the other direction: no DOM in the main process.",
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": [],
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "@shared/*": ["shared/*"]
+    },
+    "tsBuildInfoFile": "node_modules/.tmp/tsconfig.web.tsbuildinfo",
+    "outDir": "node_modules/.tmp/types/web"
+  },
+  "//include": "electron/preload.ts is listed here as well as in the node project: it defines the shape of window.api, and typing the renderer against anything else would let the two drift. Locale JSON needs an explicit glob because resolveJsonModule does not widen a directory include.",
+  "include": ["src", "src/**/*.json", "shared", "electron/preload.ts"]
+}

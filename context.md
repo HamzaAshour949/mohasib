@@ -6,9 +6,9 @@ Last updated: 2026-04-26
 
 Mohasib is currently an Electron + React + SQLite local-first accounting app, not the older Qt-only concept described in the original long-range product plan. The current working package is macOS arm64 and uses:
 
-- Electron 32.3.3, electron-vite, electron-builder
+- Electron 32, electron-vite, electron-builder (macOS arm64 + Windows x64)
 - React 18, TanStack Query, react-i18next, Tailwind
-- better-sqlite3 with local DB at `~/Library/Application Support/mohasib/companies/default.db`
+- better-sqlite3 with the company DB under Electron's userData path (`~/Library/Application Support/mohasib/companies/default.db` on macOS, `%APPDATA%` on Windows, `~/.config` on Linux)
 - Money as integer minor units stored as text strings
 - Strict halal policy: riba/interest/tax terminology is blocked or warned by compliance rules; tax/VAT/withholding automation is intentionally excluded
 
@@ -160,15 +160,20 @@ These are not blockers for the current halal parity pass, but may be future enha
 
 ## Verification commands
 
-Use these before shipping changes:
+Run before shipping changes:
 
 ```bash
-npx tsc --noEmit
-npm rebuild better-sqlite3
-npx tsx scripts/e2e-test.ts
-npx electron-builder install-app-deps
-npx electron-vite build
-npx electron-builder --mac --arm64 -c.compression=store
-codesign --force --deep --sign - release/mac-arm64/Mohasib.app
-xattr -cr release/mac-arm64/Mohasib.app
+npm run typecheck   # two projects: main process (no DOM) and renderer
+npm test            # vitest, under Electron's Node so better-sqlite3 loads
+npm run smoke       # builds, launches the real app, drives it over CDP
+```
+
+`npm run smoke` needs a display; on a headless machine use
+`xvfb-run -a npm run smoke -- --no-sandbox`.
+
+Packaging runs on the target OS, not here:
+
+```bash
+npm run pack:mac    # macOS arm64 — must run on macOS to produce a signed build
+npm run pack:win    # Windows x64
 ```

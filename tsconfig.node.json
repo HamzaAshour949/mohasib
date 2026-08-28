@@ -1,0 +1,16 @@
+{
+  "//": "Main process, preload, shared domain, build scripts. No DOM: `document` and `window` do not exist here, and a single project made them typecheck anyway.",
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@shared/*": ["shared/*"],
+      "@electron/*": ["electron/*"]
+    },
+    "tsBuildInfoFile": "node_modules/.tmp/tsconfig.node.tsbuildinfo",
+    "outDir": "node_modules/.tmp/types/node"
+  },
+  "include": ["electron", "shared", "scripts", "electron.vite.config.ts", "vitest.config.ts"]
+}
