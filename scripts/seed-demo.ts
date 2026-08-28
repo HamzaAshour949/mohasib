@@ -1,6 +1,5 @@
-// Seeds the LIVE app DB with realistic Arabic test data.
-// DB path: ~/Library/Application Support/mohasib/companies/default.db
-// Usage:   npx tsx scripts/seed-demo.ts
+// Seeds the LIVE app database with realistic Arabic test data.
+// Usage: npm run seed:demo
 
 import Database from 'better-sqlite3';
 import { existsSync, mkdirSync } from 'node:fs';
@@ -9,7 +8,16 @@ import { join } from 'node:path';
 
 import { SCHEMA_V1, DEFAULT_ACCOUNTS } from '../electron/services/migrations';
 
-const dbDir = join(homedir(), 'Library', 'Application Support', 'mohasib', 'companies');
+// Mirrors Electron's app.getPath('userData'). The macOS path was hardcoded,
+// so on Windows and Linux this seeded a database under a directory the app
+// never reads and reported success.
+const userDataDir = (): string => {
+  if (process.platform === 'darwin') return join(homedir(), 'Library', 'Application Support', 'mohasib');
+  if (process.platform === 'win32') return join(process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming'), 'mohasib');
+  return join(process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'), 'mohasib');
+};
+
+const dbDir = join(userDataDir(), 'companies');
 if (!existsSync(dbDir)) mkdirSync(dbDir, { recursive: true });
 const dbPath = join(dbDir, 'default.db');
 console.log('Seeding:', dbPath);

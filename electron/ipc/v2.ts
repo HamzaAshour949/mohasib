@@ -7,6 +7,10 @@ import { copyFileSync } from 'node:fs';
 import { db, dbPath, openCompany, closeDb } from '../services/db';
 import { runMigrations } from '../services/migrations';
 import { assertRestorableDatabase, dropWalSidecars, replaceDatabaseFile } from '../services/sqlite-file';
+import { baseCurrency } from '../services/settings';
+import { QTY_SCALE, scaleQty, valueOf, weightedAverage } from '@shared/domain/Inventory';
+import { isIsoDate, today } from '@shared/domain/Dates';
+import { saveInvoiceCore } from './invoices';
 import { S } from '../strings';
 import { audit } from '../services/audit';
 import { postJournal, nextSerial } from '../services/posting';
@@ -172,22 +176,26 @@ interface StockMoveInput {
 
 const adjustStock = (itemId: number, warehouseId: number, qtyDelta: number): void => {
   const row = db().prepare('SELECT qty FROM item_stock WHERE item_id=? AND warehouse_id=?').get(itemId, warehouseId) as { qty: string } | undefined;
-  const cur = parseFloat(row?.qty ?? '0');
-  const newQty = cur + qtyDelta;
-  if (row) db().prepare('UPDATE item_stock SET qty=? WHERE item_id=? AND warehouse_id=?').run(String(newQty), itemId, warehouseId);
-  else db().prepare('INSERT INTO item_stock (item_id, warehouse_id, qty) VALUES (?, ?, ?)').run(itemId, warehouseId, String(newQty));
+  const newQty = parseFloat(row?.qty ?? '0') + qtyDelta;
+  db().prepare(`INSERT INTO item_stock (item_id, warehouse_id, qty) VALUES (?, ?, ?)
+                ON CONFLICT(item_id, warehouse_id) DO UPDATE SET qty = excluded.qty`)
+    .run(itemId, warehouseId, String(newQty));
 };
 
+/**
+ * Roll a receipt into an item's weighted-average cost.
+ *
+ * Must be called *before* adjustStock: it reads the quantity on hand, and if
+ * the receipt has already been applied that quantity includes the incoming
+ * units, which then get counted a second time and drag the average toward the
+ * incoming price. Every caller here had them the wrong way round.
+ */
 const updateAvgCostForReceipt = (itemId: number, qtyIn: number, unitCostMinor: bigint): void => {
   if (qtyIn <= 0) return;
-  const row = db().prepare('SELECT avg_cost_minor FROM items WHERE id=?').get(itemId) as { avg_cost_minor: string };
+  const row = db().prepare('SELECT avg_cost_minor FROM items WHERE id=?').get(itemId) as { avg_cost_minor: string } | undefined;
+  if (!row) throw new Error('Item missing');
   const stockRow = db().prepare('SELECT COALESCE(SUM(CAST(qty AS REAL)), 0) AS q FROM item_stock WHERE item_id=?').get(itemId) as { q: number };
-  const curQty = stockRow.q;
-  const curAvg = BigInt(row.avg_cost_minor || '0');
-  const newQty = curQty + qtyIn;
-  if (newQty <= 0) return;
-  const totalValue = curAvg * BigInt(Math.round(curQty * 1000)) / 1000n + unitCostMinor * BigInt(Math.round(qtyIn * 1000)) / 1000n;
-  const newAvg = totalValue / BigInt(Math.max(1, Math.round(newQty * 1000))) * 1000n;
+  const newAvg = weightedAverage(stockRow.q, BigInt(row.avg_cost_minor || '0'), qtyIn, unitCostMinor);
   db().prepare('UPDATE items SET avg_cost_minor=? WHERE id=?').run(newAvg.toString(), itemId);
 };
 
@@ -223,10 +231,14 @@ export const registerStockMovements = (): void => {
       if (m.kind === 'adjust_out' && !m.fromWarehouseId) return { ok: false, error: 'Adjust-out needs warehouse' };
       if (m.kind === 'opening' && !m.toWarehouseId) return { ok: false, error: 'Opening needs warehouse' };
 
-      const serial = nextSerial(m.kind === 'transfer' ? 'TRF' : m.kind === 'adjust_in' ? 'ADI' : m.kind === 'adjust_out' ? 'ADO' : 'OPN');
+      if (!isIsoDate(m.date)) return { ok: false, error: `Invalid date: ${m.date}` };
+      const prefix = m.kind === 'transfer' ? 'TRF' : m.kind === 'adjust_in' ? 'ADI' : m.kind === 'adjust_out' ? 'ADO' : 'OPN';
+      const currency = baseCurrency();
       let movementId = 0;
+      let serial = '';
 
       db().transaction(() => {
+        serial = nextSerial(prefix);
         const r = db().prepare(`INSERT INTO stock_movements (serial, date, kind, from_warehouse_id, to_warehouse_id, notes)
                                 VALUES (?, ?, ?, ?, ?, ?)`).run(serial, m.date, m.kind,
           m.fromWarehouseId ?? null, m.toWarehouseId ?? null, m.notes ?? null);
@@ -241,14 +253,12 @@ export const registerStockMovements = (): void => {
           if (m.kind === 'transfer') {
             adjustStock(l.itemId, m.fromWarehouseId!, -qty);
             adjustStock(l.itemId, m.toWarehouseId!, qty);
-          } else if (m.kind === 'adjust_in') {
-            adjustStock(l.itemId, m.toWarehouseId!, qty);
+          } else if (m.kind === 'adjust_in' || m.kind === 'opening') {
+            // Average first, then the quantity — see updateAvgCostForReceipt.
             updateAvgCostForReceipt(l.itemId, qty, BigInt(l.unitCostMinor || '0'));
+            adjustStock(l.itemId, m.toWarehouseId!, qty);
           } else if (m.kind === 'adjust_out') {
             adjustStock(l.itemId, m.fromWarehouseId!, -qty);
-          } else if (m.kind === 'opening') {
-            adjustStock(l.itemId, m.toWarehouseId!, qty);
-            updateAvgCostForReceipt(l.itemId, qty, BigInt(l.unitCostMinor || '0'));
           }
         }
 
@@ -260,27 +270,24 @@ export const registerStockMovements = (): void => {
 
         if (m.kind === 'adjust_in' || m.kind === 'opening') {
           for (const l of m.lines) {
-            const qty = parseFloat(l.qty);
-            const unit = BigInt(l.unitCostMinor || '0');
-            total += unit * BigInt(Math.round(qty * 100)) / 100n;
+            total += valueOf(BigInt(l.unitCostMinor || '0'), parseFloat(l.qty));
           }
           if (total > 0n) {
             const equityAcct = requireAcct('3100');
-            lines.push({ accountId: inventoryAcct, debitMinor: total.toString(), creditMinor: '0', currency: 'USD', memo: `${m.kind} ${serial}` });
-            lines.push({ accountId: equityAcct, debitMinor: '0', creditMinor: total.toString(), currency: 'USD', memo: `${m.kind} ${serial}` });
+            lines.push({ accountId: inventoryAcct, debitMinor: total.toString(), creditMinor: '0', currency, memo: `${m.kind} ${serial}` });
+            lines.push({ accountId: equityAcct, debitMinor: '0', creditMinor: total.toString(), currency, memo: `${m.kind} ${serial}` });
           }
         } else if (m.kind === 'adjust_out') {
           // Cost at avg
           for (const l of m.lines) {
-            const qty = parseFloat(l.qty);
-            const item = db().prepare('SELECT avg_cost_minor FROM items WHERE id=?').get(l.itemId) as { avg_cost_minor: string };
-            const avg = BigInt(item.avg_cost_minor || '0');
-            total += avg * BigInt(Math.round(qty * 100)) / 100n;
+            const item = db().prepare('SELECT avg_cost_minor FROM items WHERE id=?').get(l.itemId) as { avg_cost_minor: string } | undefined;
+            if (!item) throw new Error('Item missing');
+            total += valueOf(BigInt(item.avg_cost_minor || '0'), parseFloat(l.qty));
           }
           if (total > 0n) {
             const opsAcct = requireAcct('5200');
-            lines.push({ accountId: opsAcct, debitMinor: total.toString(), creditMinor: '0', currency: 'USD', memo: `Adjustment ${serial}` });
-            lines.push({ accountId: inventoryAcct, debitMinor: '0', creditMinor: total.toString(), currency: 'USD', memo: `Adjustment ${serial}` });
+            lines.push({ accountId: opsAcct, debitMinor: total.toString(), creditMinor: '0', currency, memo: `Adjustment ${serial}` });
+            lines.push({ accountId: inventoryAcct, debitMinor: '0', creditMinor: total.toString(), currency, memo: `Adjustment ${serial}` });
           }
         }
         // Transfers don't move value (same item, total stock unchanged) — no JE.
@@ -325,9 +332,6 @@ const stockQty = (itemId: number, warehouseId: number): number => {
   const row = db().prepare('SELECT qty FROM item_stock WHERE item_id=? AND warehouse_id=?').get(itemId, warehouseId) as { qty: string } | undefined;
   return parseFloat(row?.qty ?? '0');
 };
-
-const amountForQty = (unitCostMinor: bigint, qty: number): bigint =>
-  unitCostMinor * BigInt(Math.round(qty * 1000)) / 1000n;
 
 export const registerManufacturing = (): void => {
   ipcMain.handle('mfg:formulas:list', () =>
@@ -405,8 +409,11 @@ export const registerManufacturing = (): void => {
   ipcMain.handle('mfg:runs:save', (_e, m: ManufactureInput): SaveResult => {
     try {
       requirePeriodOpen(m.date);
+      if (!isIsoDate(m.date)) return { ok: false, error: `Invalid date: ${m.date}` };
       const outQty = parseFloat(m.outputQty);
-      if (!m.formulaId || !m.warehouseId || outQty <= 0) return { ok: false, error: 'Formula, warehouse, and output quantity are required' };
+      if (!m.formulaId || !m.warehouseId || !Number.isFinite(outQty) || outQty <= 0) {
+        return { ok: false, error: 'Formula, warehouse, and output quantity are required' };
+      }
       const formula = db().prepare(`SELECT id, code, name, output_item_id AS outputItemId, output_qty AS outputQty
                                    FROM manufacturing_formulas WHERE id=? AND is_active=1`).get(m.formulaId) as
         { id: number; code: string; name: string; outputItemId: number; outputQty: string } | undefined;
@@ -416,7 +423,9 @@ export const registerManufacturing = (): void => {
         Array<{ itemId: number; qty: string; wastePct: string }>;
       if (!formulaLines.length) return { ok: false, error: 'Formula has no components' };
 
-      const scale = outQty / parseFloat(formula.outputQty);
+      const formulaQty = parseFloat(formula.outputQty);
+      if (!Number.isFinite(formulaQty) || formulaQty <= 0) return { ok: false, error: 'Formula output quantity is invalid' };
+      const scale = outQty / formulaQty;
       const components = formulaLines.map(line => {
         const baseQty = parseFloat(line.qty) * scale;
         const waste = parseFloat(line.wastePct || '0') / 100;
@@ -427,16 +436,16 @@ export const registerManufacturing = (): void => {
         if (available + 0.000001 < component.qty) throw new Error(`Insufficient stock for component #${component.itemId}`);
       }
 
-      const serial = nextSerial('MFG');
-      const outSerial = nextSerial('MFO');
-      const inSerial = nextSerial('MFI');
+      let serial = '';
       let runId = 0;
       let outMovementId = 0;
       let inMovementId = 0;
-      let journalId: number | undefined;
       let totalCost = 0n;
 
       db().transaction(() => {
+        serial = nextSerial('MFG');
+        const outSerial = nextSerial('MFO');
+        const inSerial = nextSerial('MFI');
         const run = db().prepare(`INSERT INTO manufacturing_runs (serial, formula_id, date, warehouse_id, output_qty, notes)
                                   VALUES (?, ?, ?, ?, ?, ?)`).run(serial, m.formulaId, m.date, m.warehouseId, m.outputQty, m.notes ?? null);
         runId = Number(run.lastInsertRowid);
@@ -447,44 +456,32 @@ export const registerManufacturing = (): void => {
         outMovementId = Number(outMove.lastInsertRowid);
         const insLine = db().prepare(`INSERT INTO stock_movement_lines (movement_id, item_id, qty, unit_cost_minor) VALUES (?, ?, ?, ?)`);
         for (const component of components) {
-          const item = db().prepare('SELECT avg_cost_minor FROM items WHERE id=?').get(component.itemId) as { avg_cost_minor: string };
+          const item = db().prepare('SELECT avg_cost_minor FROM items WHERE id=?').get(component.itemId) as { avg_cost_minor: string } | undefined;
+          if (!item) throw new Error('Component item missing');
           const avg = BigInt(item.avg_cost_minor || '0');
-          totalCost += amountForQty(avg, component.qty);
+          totalCost += valueOf(avg, component.qty);
           insLine.run(outMovementId, component.itemId, String(component.qty), avg.toString());
           adjustStock(component.itemId, m.warehouseId, -component.qty);
         }
 
-        const unitCost = totalCost > 0n ? (totalCost * 1000n / BigInt(Math.max(1, Math.round(outQty * 1000)))) : 0n;
+        const unitCost = totalCost > 0n ? (totalCost * QTY_SCALE) / scaleQty(outQty) : 0n;
         const inMove = db().prepare(`INSERT INTO stock_movements (serial, date, kind, from_warehouse_id, to_warehouse_id, notes)
                                      VALUES (?, ?, 'adjust_in', NULL, ?, ?)`)
           .run(inSerial, m.date, m.warehouseId, `Manufacturing ${serial} output`);
         inMovementId = Number(inMove.lastInsertRowid);
         insLine.run(inMovementId, formula.outputItemId, m.outputQty, unitCost.toString());
-        adjustStock(formula.outputItemId, m.warehouseId, outQty);
+        // Average before quantity — see updateAvgCostForReceipt.
         updateAvgCostForReceipt(formula.outputItemId, outQty, unitCost);
+        adjustStock(formula.outputItemId, m.warehouseId, outQty);
 
-        if (totalCost > 0n) {
-          const inventoryAcct = requireAcct('1130');
-          const pr = postJournal({
-            date: m.date,
-            reference: serial,
-            memo: `Manufacturing ${formula.code} ${serial}`,
-            sourceType: 'manufacturing',
-            sourceId: runId,
-            lines: [
-              { accountId: inventoryAcct, debitMinor: totalCost.toString(), creditMinor: '0', currency: 'USD', memo: `Finished goods ${serial}` },
-              { accountId: inventoryAcct, debitMinor: '0', creditMinor: totalCost.toString(), currency: 'USD', memo: `Components ${serial}` }
-            ]
-          });
-          if (!pr.ok) throw new Error('Posting failed: ' + (pr.errors ?? []).join('; '));
-          journalId = pr.entryId;
-        }
+        // Components and finished goods sit in the same inventory account, so
+        // a reclassification entry would debit and credit the same account for
+        // the same amount: a guaranteed no-op that only adds noise to the
+        // journal. Value moves between items, not between accounts, and the
+        // item-level average cost already records that.
 
-        db().prepare(`UPDATE manufacturing_runs SET out_movement_id=?, in_movement_id=?, journal_id=? WHERE id=?`)
-          .run(outMovementId, inMovementId, journalId ?? null, runId);
-        if (journalId) {
-          db().prepare('UPDATE stock_movements SET journal_id=? WHERE id IN (?, ?)').run(journalId, outMovementId, inMovementId);
-        }
+        db().prepare(`UPDATE manufacturing_runs SET out_movement_id=?, in_movement_id=? WHERE id=?`)
+          .run(outMovementId, inMovementId, runId);
       })();
 
       audit('create', 'manufacturing_run', runId, { serial, formulaId: m.formulaId });
@@ -626,9 +623,10 @@ export const registerQuotes = (): void => {
       const disc = BigInt(qIn.discountMinor ?? '0');
       const fees = BigInt(qIn.feesMinor ?? '0');
       const grand = subtotal - disc + fees;
-      const serial = nextSerial(qIn.kind === 'sale' ? 'QS' : 'QP');
+      let serial = '';
       let qid = 0;
       db().transaction(() => {
+        serial = nextSerial(qIn.kind === 'sale' ? 'QS' : 'QP');
         const r = db().prepare(`INSERT INTO quotes (kind, serial, date, valid_until, party_id, currency,
                                   subtotal_minor, discount_minor, fees_minor, grand_total_minor, notes)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
@@ -712,9 +710,10 @@ export const registerOrders = (): void => {
       const disc = BigInt(o.discountMinor ?? '0');
       const fees = BigInt(o.feesMinor ?? '0');
       const grand = subtotal - disc + fees;
-      const serial = nextSerial(o.kind === 'sale' ? 'OS' : 'OP');
+      let serial = '';
       let oid = 0;
       db().transaction(() => {
+        serial = nextSerial(o.kind === 'sale' ? 'OS' : 'OP');
         const r = db().prepare(`INSERT INTO orders (kind, serial, date, due_date, party_id, warehouse_id, currency,
                                   subtotal_minor, discount_minor, fees_minor, grand_total_minor, notes)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
@@ -758,16 +757,15 @@ interface DocHeader {
   discountMinor: string; feesMinor: string; notes: string | null;
 }
 
-const buildInvoiceFromDoc = async (
+const buildInvoiceFromDoc = (
   hdr: DocHeader,
   lines: DocLineRow[],
   args: ConvertArgs
-): Promise<SaveResult> => {
-  const { saveInvoiceCore } = await import('./invoices');
-  const today = new Date().toISOString().slice(0, 10);
+): SaveResult => {
+  if (!args.warehouseId) throw new Error('A warehouse is required to convert this document');
   return saveInvoiceCore({
     kind: hdr.kind, // 'sale' | 'purchase'
-    date: args.date ?? today,
+    date: args.date ?? today(),
     partyId: hdr.partyId,
     warehouseId: args.warehouseId,
     paymentMode: args.paymentMode,
@@ -786,50 +784,63 @@ const buildInvoiceFromDoc = async (
 };
 
 export const registerDocConversions = (): void => {
-  ipcMain.handle('quotes:convert', async (_e, args: ConvertArgs): Promise<SaveResult> => {
+  ipcMain.handle('quotes:convert', (_e, args: ConvertArgs): SaveResult => {
     try {
-      const q = db().prepare(`SELECT id, kind, party_id AS partyId, currency,
-                                     discount_minor AS discountMinor, fees_minor AS feesMinor,
-                                     notes, status
-                              FROM quotes WHERE id=?`).get(args.id) as
-        (DocHeader & { status: string }) | undefined;
-      if (!q) throw new Error('Quote not found');
-      if (q.status !== 'open') throw new Error(`Quote already ${q.status}`);
-      const lines = db().prepare(`SELECT item_id AS itemId, qty,
-                                          unit_price_minor AS unitPriceMinor,
-                                          discount_minor AS discountMinor
-                                   FROM quote_lines WHERE quote_id=?`).all(args.id) as DocLineRow[];
-      const r = await buildInvoiceFromDoc(q, lines, args);
-      if (!r.ok) throw new Error(r.error);
-      db().prepare(`UPDATE quotes SET status='converted', converted_invoice_id=? WHERE id=?`)
-        .run(r.id, args.id);
-      audit('convert', 'quote', args.id, { invoiceId: r.id });
-      return { ok: true, id: r.id };
+      let invoiceId: number | undefined;
+      // One transaction: creating the invoice and marking the quote converted
+      // used to be two separate writes, so a failure between them left an
+      // invoice posted against a quote still open for conversion again.
+      db().transaction(() => {
+        const q = db().prepare(`SELECT id, kind, party_id AS partyId, currency,
+                                       discount_minor AS discountMinor, fees_minor AS feesMinor,
+                                       notes, status
+                                FROM quotes WHERE id=?`).get(args.id) as
+          (DocHeader & { status: string }) | undefined;
+        if (!q) throw new Error('Quote not found');
+        if (q.status !== 'open') throw new Error(`Quote already ${q.status}`);
+        const lines = db().prepare(`SELECT item_id AS itemId, qty,
+                                            unit_price_minor AS unitPriceMinor,
+                                            discount_minor AS discountMinor
+                                     FROM quote_lines WHERE quote_id=?`).all(args.id) as DocLineRow[];
+        const r = buildInvoiceFromDoc(q, lines, args);
+        if (!r.ok) throw new Error(r.error);
+        invoiceId = r.id;
+        db().prepare(`UPDATE quotes SET status='converted', converted_invoice_id=? WHERE id=?`)
+          .run(r.id, args.id);
+      })();
+      audit('convert', 'quote', args.id, { invoiceId });
+      return { ok: true, id: invoiceId };
     } catch (e) {
       return { ok: false, error: (e as Error).message };
     }
   });
 
-  ipcMain.handle('orders:convert', async (_e, args: ConvertArgs): Promise<SaveResult> => {
+  ipcMain.handle('orders:convert', (_e, args: ConvertArgs): SaveResult => {
     try {
-      const o = db().prepare(`SELECT id, kind, party_id AS partyId, currency,
-                                     discount_minor AS discountMinor, fees_minor AS feesMinor,
-                                     notes, status, warehouse_id AS warehouseId
-                              FROM orders WHERE id=?`).get(args.id) as
-        (DocHeader & { status: string; warehouseId: number | null }) | undefined;
-      if (!o) throw new Error('Order not found');
-      if (o.status === 'cancelled' || o.status === 'fulfilled') throw new Error(`Order already ${o.status}`);
-      const lines = db().prepare(`SELECT item_id AS itemId, qty,
-                                          unit_price_minor AS unitPriceMinor,
-                                          discount_minor AS discountMinor
-                                   FROM order_lines WHERE order_id=?`).all(args.id) as DocLineRow[];
-      const r = await buildInvoiceFromDoc(o, lines, { ...args, warehouseId: args.warehouseId ?? o.warehouseId ?? 1 });
-      if (!r.ok) throw new Error(r.error);
-      db().prepare(`UPDATE orders SET status='fulfilled' WHERE id=?`).run(args.id);
-      // mark all lines fully fulfilled
-      db().prepare(`UPDATE order_lines SET qty_fulfilled=qty WHERE order_id=?`).run(args.id);
-      audit('convert', 'order', args.id, { invoiceId: r.id });
-      return { ok: true, id: r.id };
+      let invoiceId: number | undefined;
+      db().transaction(() => {
+        const o = db().prepare(`SELECT id, kind, party_id AS partyId, currency,
+                                       discount_minor AS discountMinor, fees_minor AS feesMinor,
+                                       notes, status, warehouse_id AS warehouseId
+                                FROM orders WHERE id=?`).get(args.id) as
+          (DocHeader & { status: string; warehouseId: number | null }) | undefined;
+        if (!o) throw new Error('Order not found');
+        if (o.status === 'cancelled' || o.status === 'fulfilled') throw new Error(`Order already ${o.status}`);
+        const lines = db().prepare(`SELECT item_id AS itemId, qty,
+                                            unit_price_minor AS unitPriceMinor,
+                                            discount_minor AS discountMinor
+                                     FROM order_lines WHERE order_id=?`).all(args.id) as DocLineRow[];
+        // Falling back to warehouse id 1 posted stock movements against
+        // whatever happened to be the first warehouse — or failed on a foreign
+        // key if it had been deleted. Ask instead of guessing.
+        const r = buildInvoiceFromDoc(o, lines, { ...args, warehouseId: args.warehouseId || o.warehouseId || 0 });
+        if (!r.ok) throw new Error(r.error);
+        invoiceId = r.id;
+        db().prepare(`UPDATE orders SET status='fulfilled' WHERE id=?`).run(args.id);
+        db().prepare(`UPDATE order_lines SET qty_fulfilled=qty WHERE order_id=?`).run(args.id);
+      })();
+      audit('convert', 'order', args.id, { invoiceId });
+      return { ok: true, id: invoiceId };
     } catch (e) {
       return { ok: false, error: (e as Error).message };
     }
@@ -870,12 +881,14 @@ export const registerExpenseVouchers = (): void => {
       requirePeriodOpen(x.date);
       const cashbox = db().prepare(`SELECT account_id FROM cashboxes WHERE id=?`).get(x.cashboxId) as { account_id: number } | undefined;
       if (!cashbox) throw new Error('Cashbox missing');
-      const serial = nextSerial('EX');
       const amount = BigInt(x.amountMinor);
+      if (amount <= 0n) throw new Error('Expense amount must be positive');
       let vid = 0;
       let jid = 0;
+      let serial = '';
 
       db().transaction(() => {
+        serial = nextSerial('EX');
         // Use a sentinel party — pick any party or null. The vouchers schema requires party_id NOT NULL,
         // but we can store the supplier if provided, otherwise create or pick a generic "Misc" party.
         let partyId = x.partyId ?? null;
@@ -1010,7 +1023,7 @@ export const registerPayroll = (): void => {
   ipcMain.handle('pay:save', (_e, p: PayrollInput): SaveResult => {
     try {
       requirePeriodOpen(p.date);
-      const serial = nextSerial('PR');
+      let serial = '';
       let totalNet = 0n;
       let totalPaid = 0n;
       const computed = p.lines.map(l => {
@@ -1028,6 +1041,7 @@ export const registerPayroll = (): void => {
       let sid = 0;
       let jid = 0;
       db().transaction(() => {
+        serial = nextSerial('PR');
         const r = db().prepare(`INSERT INTO payroll_sheets (serial, period, date, currency,
                                   salary_account_id, payable_account_id, payment_account_id,
                                   total_minor, paid_minor, notes, status)
@@ -1099,6 +1113,15 @@ export const registerAssets = (): void => {
   );
 
   ipcMain.handle('asset:save', (_e, a: AssetInput): SaveResult => {
+    if (!Number.isInteger(a.usefulLifeMonths) || a.usefulLifeMonths <= 0) {
+      return { ok: false, error: 'Useful life must be a positive whole number of months' };
+    }
+    if (BigInt(a.costMinor || '0') <= 0n) return { ok: false, error: 'Asset cost must be positive' };
+    if (BigInt(a.salvageMinor ?? '0') < 0n) return { ok: false, error: 'Salvage value cannot be negative' };
+    if (BigInt(a.salvageMinor ?? '0') >= BigInt(a.costMinor || '0')) {
+      return { ok: false, error: 'Salvage value must be below cost' };
+    }
+    if (!isIsoDate(a.acqDate)) return { ok: false, error: `Invalid acquisition date: ${a.acqDate}` };
     if (a.id) {
       db().prepare(`UPDATE assets SET code=?, name=?, name_en=?, acq_date=?, cost_minor=?, salvage_minor=?,
                       useful_life_months=?, asset_account_id=?, accum_account_id=?, expense_account_id=?, notes=?
@@ -1124,6 +1147,8 @@ export const registerAssets = (): void => {
   ipcMain.handle('asset:depreciate', (_e, args: { assetId: number; period: string; date: string }): SaveResult => {
     try {
       requirePeriodOpen(args.date);
+      if (!isIsoDate(args.date)) throw new Error(`Invalid date: ${args.date}`);
+      if (!/^\d{4}-\d{2}$/.test(args.period)) throw new Error(`Invalid period: ${args.period}`);
       const a = db().prepare(`SELECT * FROM assets WHERE id=?`).get(args.assetId) as {
         id: number; cost_minor: string; salvage_minor: string; useful_life_months: number;
         asset_account_id: number; accum_account_id: number; expense_account_id: number;
@@ -1134,6 +1159,8 @@ export const registerAssets = (): void => {
 
       const cost = BigInt(a.cost_minor);
       const salvage = BigInt(a.salvage_minor);
+      // Assets predating the save-time validation can still carry a zero life.
+      if (a.useful_life_months <= 0) throw new Error('Asset has no useful life set');
       const monthly = (cost - salvage) / BigInt(a.useful_life_months);
       const accumulated = BigInt(a.accumulated_minor);
       const remaining = (cost - salvage) - accumulated;
@@ -1147,9 +1174,10 @@ export const registerAssets = (): void => {
           .run(args.assetId, args.period, args.date, amount.toString());
         runId = Number(r.lastInsertRowid);
 
+        const currency = baseCurrency();
         const lines: JournalLineDto[] = [
-          { accountId: a.expense_account_id, debitMinor: amount.toString(), creditMinor: '0', currency: 'USD', memo: `Depreciation ${args.period}` },
-          { accountId: a.accum_account_id, debitMinor: '0', creditMinor: amount.toString(), currency: 'USD', memo: `Depreciation ${args.period}` }
+          { accountId: a.expense_account_id, debitMinor: amount.toString(), creditMinor: '0', currency, memo: `Depreciation ${args.period}` },
+          { accountId: a.accum_account_id, debitMinor: '0', creditMinor: amount.toString(), currency, memo: `Depreciation ${args.period}` }
         ];
         const pr = postJournal({ date: args.date, reference: `DEP-${args.assetId}-${args.period}`, memo: `Depreciation ${args.period}`, sourceType: 'depreciation', sourceId: runId, lines });
         if (!pr.ok) throw new Error('Posting failed: ' + (pr.errors ?? []).join('; '));
@@ -1339,47 +1367,80 @@ export const registerAuditReports = (): void => {
 // ---------- Year rollover ----------
 
 export const registerRollover = (): void => {
-  ipcMain.handle('rollover:run', async (_e, args: { closeDate: string; openDate: string }): Promise<SaveResult> => {
+  ipcMain.handle('rollover:run', (_e, args: { closeDate: string; openDate: string }): SaveResult => {
     try {
+      if (!isIsoDate(args.closeDate)) return { ok: false, error: `Invalid close date: ${args.closeDate}` };
       requirePeriodOpen(args.closeDate);
-      // Compute closing balances for non-temp accounts (assets/liab/equity).
-      // Net P/L from revenue - expense → push into Retained Earnings.
-      const tb = db().prepare(`SELECT a.id, a.type,
-                                      SUM(CAST(jl.debit_minor AS REAL) - CAST(jl.credit_minor AS REAL)) AS bal
-                               FROM accounts a JOIN journal_lines jl ON jl.account_id = a.id
-                               JOIN journal_entries je ON je.id = jl.entry_id
-                               WHERE date(je.date) <= date(?)
-                               GROUP BY a.id`).all(args.closeDate) as Array<{ id: number; type: string; bal: number }>;
 
-      const retainedAcct = requireAcct('3200');
-      let netIncome = 0;
-      const closingLines: JournalLineDto[] = [];
-      for (const r of tb) {
-        if (r.type === 'revenue' && r.bal !== 0) {
-          // Revenue normally credit balance => bal negative; close: Dr Revenue / Cr RE.
-          closingLines.push({ accountId: r.id, debitMinor: Math.round(-r.bal).toString(), creditMinor: '0', currency: 'USD', memo: 'Year close' });
-          netIncome += -r.bal;
-        } else if (r.type === 'expense' && r.bal !== 0) {
-          closingLines.push({ accountId: r.id, debitMinor: '0', creditMinor: Math.round(r.bal).toString(), currency: 'USD', memo: 'Year close' });
-          netIncome -= r.bal;
+      const existing = db().prepare(
+        `SELECT id, end_date FROM period_locks WHERE date(end_date) >= date(?) LIMIT 1`
+      ).get(args.closeDate) as { id: number; end_date: string } | undefined;
+      if (existing) return { ok: false, error: `Period is already closed through ${existing.end_date}` };
+
+      const currency = baseCurrency();
+      let entryId: number | undefined;
+
+      // The whole close is one transaction. Posting the closing entry and
+      // locking the period were separate writes, so a failure in between left
+      // revenue and expenses zeroed with the year still open — and running it
+      // again would zero them a second time.
+      db().transaction(() => {
+        // Integer arithmetic throughout. The previous version summed
+        // debit/credit as REAL and rounded on the way out, so a large ledger
+        // closed to a retained-earnings figure that was quietly off.
+        const balances = db().prepare(
+          `SELECT a.id, a.type,
+                  COALESCE(SUM(CAST(jl.debit_minor AS INTEGER) - CAST(jl.credit_minor AS INTEGER)), 0) AS bal
+             FROM accounts a
+             JOIN journal_lines jl ON jl.account_id = a.id
+             JOIN journal_entries je ON je.id = jl.entry_id
+            WHERE a.type IN ('revenue','expense') AND date(je.date) <= date(?)
+            GROUP BY a.id
+           HAVING bal != 0`
+        ).all(args.closeDate) as Array<{ id: number; type: string; bal: number }>;
+
+        if (balances.length === 0) return;
+
+        const retainedAcct = requireAcct('3200');
+        const closingLines: JournalLineDto[] = [];
+        let netIncome = 0n;
+
+        for (const row of balances) {
+          const balance = BigInt(row.bal);
+          if (row.type === 'revenue') {
+            // Revenue carries a credit balance, so `bal` is negative: debit it
+            // back to zero and add the same amount to net income.
+            closingLines.push({ accountId: row.id, debitMinor: (-balance).toString(), creditMinor: '0', currency, memo: 'Year close' });
+            netIncome -= balance;
+          } else {
+            closingLines.push({ accountId: row.id, debitMinor: '0', creditMinor: balance.toString(), currency, memo: 'Year close' });
+            netIncome -= balance;
+          }
         }
-      }
-      if (closingLines.length) {
-        // Net income → Retained Earnings (credit if profit, debit if loss)
-        if (netIncome > 0) {
-          closingLines.push({ accountId: retainedAcct, debitMinor: '0', creditMinor: Math.round(netIncome).toString(), currency: 'USD', memo: 'Net income to RE' });
-        } else if (netIncome < 0) {
-          closingLines.push({ accountId: retainedAcct, debitMinor: Math.round(-netIncome).toString(), creditMinor: '0', currency: 'USD', memo: 'Net loss to RE' });
+
+        if (netIncome > 0n) {
+          closingLines.push({ accountId: retainedAcct, debitMinor: '0', creditMinor: netIncome.toString(), currency, memo: 'Net income to retained earnings' });
+        } else if (netIncome < 0n) {
+          closingLines.push({ accountId: retainedAcct, debitMinor: (-netIncome).toString(), creditMinor: '0', currency, memo: 'Net loss to retained earnings' });
         }
-        const pr = postJournal({ date: args.closeDate, reference: 'YEAR-CLOSE', memo: `Year-close ${args.closeDate}`, sourceType: 'rollover', sourceId: 0, lines: closingLines });
-        if (!pr.ok) throw new Error('Closing post failed');
-      }
 
-      // Lock the closed period
-      db().prepare(`INSERT INTO period_locks (start_date, end_date, reason) VALUES ('1900-01-01', ?, ?)`)
-        .run(args.closeDate, `Year-end close at ${args.closeDate}`);
+        const posted = postJournal({
+          date: args.closeDate,
+          reference: 'YEAR-CLOSE',
+          memo: `Year-close ${args.closeDate}`,
+          sourceType: 'rollover',
+          sourceId: null,
+          lines: closingLines
+        });
+        if (!posted.ok) throw new Error('Closing post failed: ' + (posted.errors ?? []).join('; '));
+        entryId = posted.entryId;
 
-      return { ok: true };
+        db().prepare(`INSERT INTO period_locks (start_date, end_date, reason) VALUES ('1900-01-01', ?, ?)`)
+          .run(args.closeDate, `Year-end close at ${args.closeDate}`);
+      })();
+
+      audit('rollover', 'journal', entryId ?? null, { closeDate: args.closeDate });
+      return { ok: true, id: entryId };
     } catch (e) {
       return { ok: false, error: (e as Error).message };
     }
@@ -1451,12 +1512,16 @@ export const registerNotes = (): void => {
   ipcMain.handle('note:save', (_e, n: NoteInput): SaveResult => {
     try {
       requirePeriodOpen(n.date);
-      const serial = nextSerial(NOTE_PREFIX[n.kind]);
+      const prefix = NOTE_PREFIX[n.kind];
+      if (!prefix) throw new Error(`Unknown note kind: ${n.kind}`);
       const amount = BigInt(n.amountMinor);
+      if (amount <= 0n) throw new Error('Note amount must be positive');
       let nid = 0;
       let jid = 0;
+      let serial = '';
 
       db().transaction(() => {
+        serial = nextSerial(prefix);
         const r = db().prepare(`INSERT INTO notes_docs (kind, serial, date, party_id, account_id, currency, amount_minor, notes)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
           .run(n.kind, serial, n.date, n.partyId, n.accountId, n.currency, amount.toString(), n.notes ?? null);
@@ -1541,7 +1606,7 @@ export const registerMultiVouchers = (): void => {
       requirePeriodOpen(v.date);
       const cashbox = db().prepare(`SELECT account_id FROM cashboxes WHERE id=?`).get(v.cashboxId) as { account_id: number } | undefined;
       if (!cashbox) throw new Error('Cashbox missing');
-      const serial = nextSerial(v.kind === 'receipt' ? 'MR' : 'MP');
+      let serial = '';
 
       let total = 0n;
       const computed = v.lines.map(l => {
@@ -1555,6 +1620,7 @@ export const registerMultiVouchers = (): void => {
       let vid = 0;
       let jid = 0;
       db().transaction(() => {
+        serial = nextSerial(v.kind === 'receipt' ? 'MR' : 'MP');
         const r = db().prepare(`INSERT INTO multi_vouchers (kind, serial, date, cashbox_id, currency, total_minor, notes)
                                 VALUES (?, ?, ?, ?, ?, ?, ?)`)
           .run(v.kind, serial, v.date, v.cashboxId, v.currency, total.toString(), v.notes ?? null);

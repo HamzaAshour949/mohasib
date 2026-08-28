@@ -4,6 +4,8 @@ import { audit } from '../services/audit';
 import { postJournal, nextSerial } from '../services/posting';
 import { requirePeriodOpen } from '../services/period';
 import { INVOICE_COLS, INVOICE_LINE_COLS } from '../services/columns';
+import { valueOf, weightedAverage } from '@shared/domain/Inventory';
+import { addDays, isIsoDate } from '@shared/domain/Dates';
 import type { Invoice, InvoiceLine, JournalEntryDto, JournalLineDto, SaveResult } from '@shared/types';
 
 interface InvoiceRow {
@@ -38,43 +40,36 @@ const cashboxAcct = (cashboxId: number): number => {
 };
 
 // Adjust stock and weighted-average cost.
-// dir: +1 add stock, -1 remove stock
+// qtyDelta: positive receives stock, negative issues it.
+// Returns the cost of the movement in minor units — for an issue, the quantity
+// valued at the average cost in force *before* the movement.
 const moveStock = (
   itemId: number,
   warehouseId: number,
-  qtyDelta: number,           // signed
-  unitPriceMinor: bigint     // for incoming, the cost; for outgoing, ignored
-): bigint /* cost-of-move minor (for outgoing = qty * avg cost) */ => {
+  qtyDelta: number,
+  unitPriceMinor: bigint     // receipts only: the unit cost of the incoming stock
+): bigint => {
   const item = db().prepare('SELECT avg_cost_minor FROM items WHERE id = ?').get(itemId) as { avg_cost_minor: string } | undefined;
   if (!item) throw new Error('Item missing');
   const stockRow = db().prepare('SELECT qty FROM item_stock WHERE item_id = ? AND warehouse_id = ?').get(itemId, warehouseId) as { qty: string } | undefined;
-  const curQty = parseFloat(stockRow?.qty ?? '0');
-  const curAvg = BigInt(item.avg_cost_minor || '0');
+  const currentQty = parseFloat(stockRow?.qty ?? '0');
+  const currentAvg = BigInt(item.avg_cost_minor || '0');
 
-  let costOfMove = 0n;
+  let costOfMove: bigint;
   if (qtyDelta > 0) {
-    // incoming: weighted-average update
-    const newQty = curQty + qtyDelta;
-    if (newQty > 0) {
-      const totalValue = curAvg * BigInt(Math.round(curQty * 1000)) / 1000n + unitPriceMinor * BigInt(Math.round(qtyDelta * 1000)) / 1000n;
-      const newAvg = totalValue / BigInt(Math.max(1, Math.round(newQty * 1000))) * 1000n;
-      db().prepare('UPDATE items SET avg_cost_minor = ? WHERE id = ?').run(newAvg.toString(), itemId);
-    }
-    costOfMove = unitPriceMinor * BigInt(Math.round(qtyDelta * 100)) / 100n;
+    // The average has to be computed from the quantity held *before* the
+    // receipt. Reading it afterwards counts the incoming units twice.
+    const newAvg = weightedAverage(currentQty, currentAvg, qtyDelta, unitPriceMinor);
+    db().prepare('UPDATE items SET avg_cost_minor = ? WHERE id = ?').run(newAvg.toString(), itemId);
+    costOfMove = valueOf(unitPriceMinor, qtyDelta);
   } else {
-    // outgoing: cost = avg * qty
-    const outQty = -qtyDelta;
-    costOfMove = curAvg * BigInt(Math.round(outQty * 100)) / 100n;
+    costOfMove = valueOf(currentAvg, -qtyDelta);
   }
 
-  const newQty = curQty + qtyDelta;
-  if (stockRow) {
-    db().prepare('UPDATE item_stock SET qty = ? WHERE item_id = ? AND warehouse_id = ?')
-      .run(String(newQty), itemId, warehouseId);
-  } else {
-    db().prepare('INSERT INTO item_stock (item_id, warehouse_id, qty) VALUES (?, ?, ?)')
-      .run(itemId, warehouseId, String(newQty));
-  }
+  const newQty = currentQty + qtyDelta;
+  db().prepare(`INSERT INTO item_stock (item_id, warehouse_id, qty) VALUES (?, ?, ?)
+                ON CONFLICT(item_id, warehouse_id) DO UPDATE SET qty = excluded.qty`)
+    .run(itemId, warehouseId, String(newQty));
   return costOfMove;
 };
 
@@ -132,7 +127,9 @@ export const registerInvoices = (): void => {
       const invDisc = BigInt(inv.invDiscountMinor ?? '0');
       const fees = BigInt(inv.feesMinor ?? '0');
       const grand = subtotal - invDisc + fees;
-      const serial = nextSerial(SERIAL_PREFIX[inv.kind]);
+      const prefix = SERIAL_PREFIX[inv.kind];
+      if (!prefix) throw new Error(`Unknown invoice kind: ${inv.kind}`);
+      if (!isIsoDate(inv.date)) throw new Error(`Invalid invoice date: ${inv.date}`);
 
       // Credit-limit + due-date enforcement (sale on credit only)
       let dueDate: string | null = inv.dueDate ?? null;
@@ -152,17 +149,19 @@ export const registerInvoices = (): void => {
             }
           }
           if (!dueDate && party.dd && party.dd > 0) {
-            const d = new Date(inv.date);
-            d.setDate(d.getDate() + party.dd);
-            dueDate = d.toISOString().slice(0, 10);
+            dueDate = addDays(inv.date, party.dd);
           }
         }
       }
 
       let invoiceId = 0;
       let journalId = 0;
+      let serial = '';
 
       db().transaction(() => {
+        // Inside the transaction: a serial burned by a failed post leaves a
+        // permanent hole in an audited sequence.
+        serial = nextSerial(prefix);
         const r = db().prepare(`INSERT INTO invoices
           (kind, serial, date, party_id, warehouse_id, payment_mode, cashbox_id, currency,
            subtotal_minor, inv_discount_minor, fees_minor, grand_total_minor, notes, due_date)
@@ -183,10 +182,6 @@ export const registerInvoices = (): void => {
 
         // Build JE
         const lines: JournalLineDto[] = [];
-        const ar = '1110';   // unused — direct lookup below
-        const ap = '2110';
-        void ar; void ap;
-
         const arOrCash = (): number => inv.paymentMode === 'cash'
           ? cashboxAcct(inv.cashboxId!)
           : partyAcct(inv.partyId, 'ar');
@@ -213,12 +208,11 @@ export const registerInvoices = (): void => {
           }
         } else if (inv.kind === 'purchase') {
           // Dr Inventory; Cr AP/Cash
-          let totalIn = 0n;
-          for (const l of computedLines) totalIn += moveStock(l.itemId, inv.warehouseId, l.qty, l.unit);
-          // For ledger: use grand (includes fees & discount). Difference between totalIn and grand could be a price-variance — keep simple: use grand on inventory.
+          for (const l of computedLines) moveStock(l.itemId, inv.warehouseId, l.qty, l.unit);
+          // Inventory carries the grand total, so invoice-level fees and
+          // discounts land in stock value rather than in a variance account.
           lines.push({ accountId: inventoryAcct, debitMinor: grand.toString(), creditMinor: '0', currency: inv.currency, memo: `Purchase ${serial}` });
           lines.push({ accountId: apOrCash(), debitMinor: '0', creditMinor: grand.toString(), currency: inv.currency, memo: `Purchase ${serial}` });
-          void totalIn;
         } else if (inv.kind === 'sale_return') {
           // Dr Sales Returns; Cr AR/Cash
           lines.push({ accountId: salesReturnsAcct, debitMinor: grand.toString(), creditMinor: '0', currency: inv.currency, memo: `Sale return ${serial}` });
@@ -229,8 +223,10 @@ export const registerInvoices = (): void => {
             // restore at the current avg cost
             const item = db().prepare('SELECT avg_cost_minor FROM items WHERE id = ?').get(l.itemId) as { avg_cost_minor: string };
             const avg = BigInt(item.avg_cost_minor || '0');
+            // Returning at the current average leaves the average untouched,
+            // which is what a return should do.
             moveStock(l.itemId, inv.warehouseId, l.qty, avg);
-            cogsBack += avg * BigInt(Math.round(l.qty * 100)) / 100n;
+            cogsBack += valueOf(avg, l.qty);
           }
           if (cogsBack > 0n) {
             lines.push({ accountId: inventoryAcct, debitMinor: cogsBack.toString(), creditMinor: '0', currency: inv.currency, memo: `COGS reversal ${serial}` });

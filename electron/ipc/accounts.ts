@@ -19,15 +19,31 @@ export const registerAccounts = (): void => {
 
   ipcMain.handle('accounts:tree', () => {
     const all = db().prepare(`SELECT ${ACCOUNT_COLS} FROM accounts ORDER BY code`).all() as Account[];
+    const codes = new Set(all.map(a => a.code));
     const byParent = new Map<string | null, Account[]>();
     for (const a of all) {
-      const p = a.parentCode ?? null;
-      if (!byParent.has(p)) byParent.set(p, []);
-      byParent.get(p)!.push(a);
+      // An account whose parent_code names a row that no longer exists used to
+      // disappear from the tree entirely — the only place the chart of
+      // accounts is browsed — while still holding a balance. Treat it as a
+      // root so it stays visible.
+      const parent = a.parentCode && codes.has(a.parentCode) ? a.parentCode : null;
+      if (!byParent.has(parent)) byParent.set(parent, []);
+      byParent.get(parent)!.push(a);
     }
+
     interface Node extends Account { children: Node[] }
+    // parent_code is a free-text column with no constraint stopping a cycle
+    // (A's parent is B, B's parent is A). The recursive build had no guard, so
+    // one bad edit hung the main process on an infinite descent, taking the
+    // whole app with it.
+    const seen = new Set<string>();
     const build = (parent: string | null): Node[] =>
-      (byParent.get(parent) || []).map(a => ({ ...a, children: build(a.code) }));
+      (byParent.get(parent) ?? [])
+        .filter(a => !seen.has(a.code))
+        .map(a => {
+          seen.add(a.code);
+          return { ...a, children: build(a.code) };
+        });
     return build(null);
   });
 
@@ -36,6 +52,31 @@ export const registerAccounts = (): void => {
   );
 
   ipcMain.handle('accounts:save', (_e, a: AccountInput): SaveResult => {
+    if (!a.code?.trim()) return { ok: false, error: 'Account code is required' };
+    if (!a.name?.trim()) return { ok: false, error: 'Account name is required' };
+    if (!a.type) return { ok: false, error: 'Account type is required' };
+    if (a.parentCode && a.parentCode === a.code) return { ok: false, error: 'An account cannot be its own parent' };
+
+    const clash = db().prepare('SELECT id FROM accounts WHERE code = ? AND id IS NOT ?').get(a.code, a.id ?? null) as { id: number } | undefined;
+    if (clash) return { ok: false, error: `Account code ${a.code} is already used` };
+
+    if (a.parentCode) {
+      const parent = db().prepare('SELECT code FROM accounts WHERE code = ?').get(a.parentCode) as { code: string } | undefined;
+      if (!parent) return { ok: false, error: `Parent account ${a.parentCode} does not exist` };
+      // Walk up from the proposed parent: if we come back to this account, the
+      // edit would create a cycle and make the tree unbuildable.
+      if (a.id) {
+        const ancestors = new Set<string>();
+        let cursor: string | null = a.parentCode;
+        while (cursor && !ancestors.has(cursor)) {
+          if (cursor === a.code) return { ok: false, error: 'That parent would make the account its own ancestor' };
+          ancestors.add(cursor);
+          const row = db().prepare('SELECT parent_code AS parentCode FROM accounts WHERE code = ?').get(cursor) as { parentCode: string | null } | undefined;
+          cursor = row?.parentCode ?? null;
+        }
+      }
+    }
+
     const c1 = checkText(a.name ?? '', policyMode());
     const c2 = checkText(a.nameEn ?? '', policyMode());
     if (c1.blocked) return { ok: false, error: c1.warning };
@@ -59,9 +100,37 @@ export const registerAccounts = (): void => {
   });
 
   ipcMain.handle('accounts:delete', (_e, id: number): SaveResult => {
+    const account = db().prepare('SELECT code FROM accounts WHERE id = ?').get(id) as { code: string } | undefined;
+    if (!account) return { ok: false, error: 'Account not found' };
+
     const used = db().prepare('SELECT COUNT(*) AS n FROM journal_lines WHERE account_id = ?').get(id) as { n: number };
     if (used.n > 0) return { ok: false, error: 'Account is used in journal entries — cannot delete' };
-    db().prepare('DELETE FROM accounts WHERE id = ?').run(id);
+
+    // Deleting a parent left its children pointing at a code that no longer
+    // exists, which used to drop them out of the account tree silently.
+    const child = db().prepare('SELECT code FROM accounts WHERE parent_code = ? LIMIT 1').get(account.code) as { code: string } | undefined;
+    if (child) return { ok: false, error: `Account has sub-accounts (${child.code}) — cannot delete` };
+
+    // Masters point at accounts with plain REFERENCES, so without these checks
+    // the delete surfaced a raw foreign-key error.
+    const references: Array<[string, string]> = [
+      ['parties', 'ar_account_id'],
+      ['parties', 'ap_account_id'],
+      ['cashboxes', 'account_id'],
+      ['expense_categories', 'account_id'],
+      ['employees', 'payable_account_id'],
+      ['account_budgets', 'account_id']
+    ];
+    for (const [table, column] of references) {
+      const row = db().prepare(`SELECT 1 FROM ${table} WHERE ${column} = ? LIMIT 1`).get(id);
+      if (row) return { ok: false, error: `Account is referenced by ${table} — cannot delete` };
+    }
+
+    try {
+      db().prepare('DELETE FROM accounts WHERE id = ?').run(id);
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
     audit('delete', 'account', id);
     return { ok: true };
   });

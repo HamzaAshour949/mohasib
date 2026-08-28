@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import { db } from '../services/db';
 import { audit } from '../services/audit';
 import { checkText } from '@shared/domain/Compliance';
+import { baseCurrency } from '../services/settings';
 import { PARTY_COLS } from '../services/columns';
 import type { Party, SaveResult } from '@shared/types';
 
@@ -23,7 +24,7 @@ const ensurePartyAccount = (
   if (existing) return existing.id;
   const r = db().prepare(`INSERT INTO accounts (code, name, name_en, type, parent_code, currency, is_party, party_id)
                           VALUES (?, ?, ?, ?, ?, ?, 1, ?)`)
-    .run(code, partyName, partyName, accountType, parentCode, 'USD', partyId);
+    .run(code, partyName, partyName, accountType, parentCode, baseCurrency(), partyId);
   return Number(r.lastInsertRowid);
 };
 
@@ -57,13 +58,24 @@ export const registerParties = (): void => {
         id = Number(r.lastInsertRowid);
       }
 
-      // Auto-create AR/AP sub-account
+      // Auto-create AR/AP sub-accounts.
       const wantsAr = p.kind === 'customer' || p.kind === 'both';
       const wantsAp = p.kind === 'supplier' || p.kind === 'both';
-      let arId: number | null = null;
-      let apId: number | null = null;
-      if (wantsAr) arId = ensurePartyAccount(id, p.code!, p.name!, 'ar');
-      if (wantsAp) apId = ensurePartyAccount(id, p.code!, p.name!, 'ap');
+      const existing = db().prepare('SELECT ar_account_id AS ar, ap_account_id AS ap FROM parties WHERE id = ?')
+        .get(id) as { ar: number | null; ap: number | null };
+
+      // Changing a customer to a supplier used to null out ar_account_id.
+      // If that sub-account still carried a balance, the receivable stayed in
+      // the ledger with nothing pointing at it and the party statement lost
+      // sight of it. Keep the link whenever the account has been posted to.
+      const keepIfPosted = (accountId: number | null): number | null => {
+        if (accountId == null) return null;
+        const posted = db().prepare('SELECT 1 FROM journal_lines WHERE account_id = ? LIMIT 1').get(accountId);
+        return posted ? accountId : null;
+      };
+
+      const arId = wantsAr ? ensurePartyAccount(id, p.code!, p.name!, 'ar') : keepIfPosted(existing.ar);
+      const apId = wantsAp ? ensurePartyAccount(id, p.code!, p.name!, 'ap') : keepIfPosted(existing.ap);
       db().prepare('UPDATE parties SET ar_account_id = ?, ap_account_id = ? WHERE id = ?')
         .run(arId, apId, id);
 
@@ -73,9 +85,36 @@ export const registerParties = (): void => {
   });
 
   ipcMain.handle('parties:delete', (_e, id: number): SaveResult => {
-    const used = db().prepare('SELECT COUNT(*) AS n FROM invoices WHERE party_id = ?').get(id) as { n: number };
-    if (used.n > 0) return { ok: false, error: 'Party has invoices — cannot delete' };
-    db().prepare('DELETE FROM parties WHERE id = ?').run(id);
+    // Only invoices were checked, so deleting a party with vouchers, cheques
+    // or notes surfaced a raw 'FOREIGN KEY constraint failed' instead of an
+    // explanation — or, where the reference was nullable, quietly detached the
+    // document from its party.
+    const references: Array<[string, string]> = [
+      ['invoices', 'party_id'],
+      ['vouchers', 'party_id'],
+      ['cheques', 'party_id'],
+      ['quotes', 'party_id'],
+      ['orders', 'party_id'],
+      ['notes_docs', 'party_id'],
+      ['multi_voucher_lines', 'party_id'],
+      ['employees', 'party_id']
+    ];
+    for (const [table, column] of references) {
+      const row = db().prepare(`SELECT 1 FROM ${table} WHERE ${column} = ? LIMIT 1`).get(id);
+      if (row) return { ok: false, error: `Party is referenced by ${table} — cannot delete` };
+    }
+    const posted = db().prepare(
+      `SELECT 1 FROM journal_lines jl
+         JOIN parties p ON p.ar_account_id = jl.account_id OR p.ap_account_id = jl.account_id
+        WHERE p.id = ? LIMIT 1`
+    ).get(id);
+    if (posted) return { ok: false, error: 'Party has ledger entries — cannot delete' };
+
+    try {
+      db().prepare('DELETE FROM parties WHERE id = ?').run(id);
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
     audit('delete', 'party', id);
     return { ok: true };
   });

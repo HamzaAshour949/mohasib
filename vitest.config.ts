@@ -14,7 +14,10 @@ export default defineConfig({
     alias: {
       '@shared': resolve(__dirname, 'shared'),
       '@electron': resolve(__dirname, 'electron'),
-      '@': resolve(__dirname, 'src')
+      '@': resolve(__dirname, 'src'),
+      // Lets the IPC handlers be tested as the renderer calls them, rather
+      // than a hand-written re-implementation of what they are supposed to do.
+      electron: resolve(__dirname, 'electron/test-support/electron-stub.ts')
     }
   }
 });

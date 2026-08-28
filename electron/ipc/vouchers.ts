@@ -39,12 +39,14 @@ export const registerVouchers = (): void => {
   ipcMain.handle('vouchers:save', (_e, v: VoucherInput): SaveResult => {
     try {
       requirePeriodOpen(v.date);
-      const serial = nextSerial(v.kind === 'receipt' ? 'R' : 'PV');
       const amount = BigInt(v.amountMinor);
+      if (amount <= 0n) throw new Error('Voucher amount must be positive');
       let voucherId = 0;
       let journalId = 0;
+      let serial = '';
 
       db().transaction(() => {
+        serial = nextSerial(v.kind === 'receipt' ? 'R' : 'PV');
         const r = db().prepare(`INSERT INTO vouchers (kind, serial, date, party_id, cashbox_id, currency, amount_minor, notes)
                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
           v.kind, serial, v.date, v.partyId, v.cashboxId, v.currency, amount.toString(), v.notes ?? null

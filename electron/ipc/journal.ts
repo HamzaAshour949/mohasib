@@ -37,6 +37,16 @@ export const registerJournal = (): void => {
   });
 
   ipcMain.handle('journal:reverse', (_e, args: { id: number; date: string; memo?: string }): SaveResult => {
+    // A reversal is a posting like any other, and it was the one posting path
+    // that skipped the period check — so a locked period could still be
+    // written to by reversing an entry into it.
+    try { requirePeriodOpen(args.date); } catch (e) { return { ok: false, error: (e as Error).message }; }
+
+    const already = db().prepare(
+      `SELECT id FROM journal_entries WHERE source_type='reversal' AND source_id=? LIMIT 1`
+    ).get(args.id) as { id: number } | undefined;
+    if (already) return { ok: false, error: `Entry #${args.id} was already reversed by #${already.id}` };
+
     const r = reverseJournal(args.id, args.date, args.memo);
     if (!r.ok) return { ok: false, error: (r.errors ?? []).join('; ') };
     audit('reverse', 'journal', args.id, { newEntryId: r.entryId });

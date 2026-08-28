@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import { db } from '../services/db';
 import { audit } from '../services/audit';
 import { postJournal, nextSerial } from '../services/posting';
+import { requirePeriodOpen } from '../services/period';
 import { CHEQUE_COLS } from '../services/columns';
 import type { Cheque, ChequeStatus, JournalEntryDto, SaveResult } from '@shared/types';
 
@@ -37,6 +38,9 @@ const acctIdByCode = (code: string): number => {
   return r.id;
 };
 
+/** Once a cheque reaches one of these, its money has moved and it is closed. */
+const TERMINAL_STATUSES = new Set<string>(['cleared', 'returned', 'paid', 'cancelled']);
+
 export const registerCheques = (): void => {
   ipcMain.handle('cheques:list', (_e, status?: string) => {
     const where = status ? 'WHERE status = ?' : '';
@@ -46,12 +50,15 @@ export const registerCheques = (): void => {
 
   ipcMain.handle('cheques:save', (_e, c: ChequeInput): SaveResult => {
     try {
-      const serial = nextSerial(c.direction === 'in' ? 'CHI' : 'CHO');
+      requirePeriodOpen(c.date);
       const initialStatus: ChequeStatus = c.direction === 'in' ? 'received' : 'issued';
       const amount = BigInt(c.amountMinor);
+      if (amount <= 0n) throw new Error('Cheque amount must be positive');
       let chequeId = 0;
+      let serial = '';
 
       db().transaction(() => {
+        serial = nextSerial(c.direction === 'in' ? 'CHI' : 'CHO');
         const r = db().prepare(`INSERT INTO cheques
           (serial, number, bank, date, due_date, party_id, cashbox_id, direction, status, currency, amount_minor, notes)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
@@ -95,6 +102,14 @@ export const registerCheques = (): void => {
     try {
       const c = db().prepare(`SELECT ${CHEQUE_COLS} FROM cheques WHERE id = ?`).get(args.id) as Cheque | undefined;
       if (!c) return { ok: false, error: 'Cheque not found' };
+      requirePeriodOpen(args.date);
+      // Settled cheques are done. Without this, transitioning an already
+      // cleared cheque to 'cleared' again posted the settlement entry a
+      // second time and doubled the cash.
+      if (TERMINAL_STATUSES.has(c.status)) {
+        return { ok: false, error: `Cheque is already ${c.status}` };
+      }
+      if (c.status === args.toStatus) return { ok: false, error: `Cheque is already ${c.status}` };
 
       db().transaction(() => {
         const amount = BigInt(c.amountMinor);

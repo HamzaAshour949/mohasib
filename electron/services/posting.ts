@@ -1,18 +1,25 @@
 import { db } from './db';
+import { baseCurrency } from './settings';
 import type { JournalEntryDto } from '@shared/types';
 import { validate, type JournalEntry } from '@shared/domain/Posting';
 
+/**
+ * Allocate the next serial for `prefix`.
+ *
+ * Read-then-update was not atomic, and every caller ran it *before* opening
+ * its transaction, so a document that failed to post still consumed its number
+ * and left a permanent hole in an audited sequence. Callers now invoke this
+ * inside their transaction, and the reservation is a single statement that
+ * rolls back with everything else.
+ */
 export const nextSerial = (prefix: string): string => {
+  if (!prefix) throw new Error('Serial prefix is required');
   const d = db();
-  const row = d.prepare('SELECT next_value FROM serials WHERE prefix = ?').get(prefix) as { next_value: number } | undefined;
-  let n = 1;
-  if (row) {
-    n = row.next_value;
-    d.prepare('UPDATE serials SET next_value = next_value + 1 WHERE prefix = ?').run(prefix);
-  } else {
-    d.prepare('INSERT INTO serials(prefix, next_value) VALUES (?, ?)').run(prefix, 2);
-  }
-  return `${prefix}-${String(n).padStart(6, '0')}`;
+  d.prepare('INSERT INTO serials(prefix, next_value) VALUES (?, 1) ON CONFLICT(prefix) DO NOTHING').run(prefix);
+  const row = d.prepare('UPDATE serials SET next_value = next_value + 1 WHERE prefix = ? RETURNING next_value - 1 AS allocated')
+    .get(prefix) as { allocated: number } | undefined;
+  if (!row) throw new Error(`Could not allocate a serial for ${prefix}`);
+  return `${prefix}-${String(row.allocated).padStart(6, '0')}`;
 };
 
 export interface PostResult {
@@ -56,7 +63,7 @@ export const postJournal = (e: JournalEntryDto): PostResult => {
       e.sourceType ?? 'manual',
       e.sourceId ?? null,
       totalAbs.toString(),
-      domain.lines[0]?.currency ?? 'USD'
+      domain.lines[0]?.currency ?? baseCurrency()
     );
     entryId = Number(r.lastInsertRowid);
     for (const ln of domain.lines) {
