@@ -1,12 +1,13 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../lib/ipc';
 import type { Cashbox, Party, Voucher, VoucherKind } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Select, Table } from '../components/ui';
 import { formatMoney, majorToMinor, today } from '../lib/money';
 import { useNamesById } from '../lib/lookup';
 import { describeError } from '../lib/errors';
+import { useBaseCurrency } from '../lib/settings';
 
 export default function VouchersPage(): JSX.Element {
   const { t } = useTranslation();
@@ -19,7 +20,12 @@ export default function VouchersPage(): JSX.Element {
   const [date, setDate] = useState(today());
   const [partyId, setPartyId] = useState<number | ''>('');
   const [cashboxId, setCashboxId] = useState<number | ''>('');
-  const [currency, setCurrency] = useState('USD');
+  const baseCurrency = useBaseCurrency();
+  const [currency, setCurrency] = useState(baseCurrency);
+  // Settings arrive after the first render; adopt the company currency then,
+  // unless the user has already chosen something else on this document.
+  const [currencyTouched, setCurrencyTouched] = useState(false);
+  useEffect(() => { if (!currencyTouched) setCurrency(baseCurrency); setCurrencyTouched(false); }, [baseCurrency, currencyTouched]);
   const [amountMajor, setAmountMajor] = useState('0');
   const [notes, setNotes] = useState('');
 
@@ -80,7 +86,7 @@ export default function VouchersPage(): JSX.Element {
               {cashboxes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </Select>
           </div>
-          <div><Label>{t('currency')}</Label><Input value={currency} onChange={e => setCurrency(e.target.value)} /></div>
+          <div><Label>{t('currency')}</Label><Input value={currency} onChange={e => { setCurrencyTouched(true); setCurrency(e.target.value); }} /></div>
           <div><Label>{t('amount')}</Label><Input className="ltr-num" value={amountMajor} onChange={e => setAmountMajor(e.target.value)} /></div>
           <div className="col-span-2"><Label>{tf('notes')}</Label><Input value={notes} onChange={e => setNotes(e.target.value)} /></div>
         </div>

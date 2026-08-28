@@ -1,12 +1,13 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../lib/ipc';
 import type { Item, Party, Warehouse, Cashbox } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Select, Table } from '../components/ui';
 import { formatMoney, majorToMinor, today } from '../lib/money';
 import { describeError } from '../lib/errors';
 import { confirmDiscard, useDirtyDocument } from '../lib/dirty';
+import { useBaseCurrency } from '../lib/settings';
 
 interface Order {
   id: number; kind: 'sale' | 'purchase'; serial: string; date: string; dueDate: string | null;
@@ -26,7 +27,12 @@ export default function OrdersPage(): JSX.Element {
   const [dueDate, setDueDate] = useState('');
   const [partyId, setPartyId] = useState<number | ''>('');
   const [warehouseId, setWarehouseId] = useState<number | ''>('');
-  const [currency, setCurrency] = useState('USD');
+  const baseCurrency = useBaseCurrency();
+  const [currency, setCurrency] = useState(baseCurrency);
+  // Settings arrive after the first render; adopt the company currency then,
+  // unless the user has already chosen something else on this document.
+  const [currencyTouched, setCurrencyTouched] = useState(false);
+  useEffect(() => { if (!currencyTouched) setCurrency(baseCurrency); setCurrencyTouched(false); }, [baseCurrency, currencyTouched]);
   const [discMajor, setDiscMajor] = useState('0');
   const [feesMajor, setFeesMajor] = useState('0');
   const [notes, setNotes] = useState('');
@@ -45,7 +51,7 @@ export default function OrdersPage(): JSX.Element {
 
   const reset = (): void => {
     setKind('sale'); setDate(today()); setDueDate(''); setPartyId(''); setWarehouseId('');
-    setCurrency('USD'); setDiscMajor('0'); setFeesMajor('0'); setNotes(''); setLines([]);
+    setCurrency(baseCurrency); setCurrencyTouched(false); setDiscMajor('0'); setFeesMajor('0'); setNotes(''); setLines([]);
   };
   // Losing a half-entered document because a modal was dismissed is the kind
   // of thing people only notice after it happens. The same prompt guards the
@@ -152,7 +158,7 @@ export default function OrdersPage(): JSX.Element {
               {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
             </Select>
           </div>
-          <div><Label>{t('currency')}</Label><Input value={currency} onChange={e => setCurrency(e.target.value)} /></div>
+          <div><Label>{t('currency')}</Label><Input value={currency} onChange={e => { setCurrencyTouched(true); setCurrency(e.target.value); }} /></div>
         </div>
         <div className="mt-4 flex items-center gap-2">
           <h3 className="text-sm font-semibold">{t('item')}</h3>

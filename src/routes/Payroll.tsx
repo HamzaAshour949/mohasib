@@ -1,12 +1,13 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../lib/ipc';
 import type { Account, Cashbox } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Select, Table } from '../components/ui';
 import { formatMoney, majorToMinor, today } from '../lib/money';
 import { useIndexById, useNamesById } from '../lib/lookup';
 import { describeError } from '../lib/errors';
+import { useBaseCurrency } from '../lib/settings';
 
 interface Employee { id: number; code: string; name: string; basicSalaryMinor: string; allowanceMinor: string; payableAccountId: number | null }
 interface Sheet {
@@ -23,7 +24,12 @@ export default function PayrollPage(): JSX.Element {
   const [open, setOpen] = useState(false);
   const [period, setPeriod] = useState(today().slice(0, 7));
   const [date, setDate] = useState(today());
-  const [currency, setCurrency] = useState('USD');
+  const baseCurrency = useBaseCurrency();
+  const [currency, setCurrency] = useState(baseCurrency);
+  // Settings arrive after the first render; adopt the company currency then,
+  // unless the user has already chosen something else on this document.
+  const [currencyTouched, setCurrencyTouched] = useState(false);
+  useEffect(() => { if (!currencyTouched) setCurrency(baseCurrency); setCurrencyTouched(false); }, [baseCurrency, currencyTouched]);
   const [salaryAccountId, setSalaryAccountId] = useState<number | ''>('');
   const [payableAccountId, setPayableAccountId] = useState<number | ''>('');
   const [paymentCashboxId, setPaymentCashboxId] = useState<number | ''>('');
@@ -39,7 +45,7 @@ export default function PayrollPage(): JSX.Element {
   const liabAccts = accounts.filter(a => a.type === 'liability');
 
   const reset = (): void => {
-    setPeriod(today().slice(0, 7)); setDate(today()); setCurrency('USD');
+    setPeriod(today().slice(0, 7)); setDate(today()); setCurrency(baseCurrency); setCurrencyTouched(false);
     setSalaryAccountId(expAccts.find(a => a.code === '5230')?.id ?? '');
     setPayableAccountId(liabAccts.find(a => a.code === '2120')?.id ?? '');
     setPaymentCashboxId(''); setNotes('');
@@ -95,7 +101,7 @@ export default function PayrollPage(): JSX.Element {
         <div className="grid grid-cols-4 gap-3">
           <div><Label>Period</Label><Input className="ltr-num" value={period} onChange={e => setPeriod(e.target.value)} /></div>
           <div><Label>{t('date')}</Label><Input type="date" className="ltr-num" value={date} onChange={e => setDate(e.target.value)} /></div>
-          <div><Label>{t('currency')}</Label><Input value={currency} onChange={e => setCurrency(e.target.value)} /></div>
+          <div><Label>{t('currency')}</Label><Input value={currency} onChange={e => { setCurrencyTouched(true); setCurrency(e.target.value); }} /></div>
           <div />
           <div><Label>Salary expense</Label>
             <Select value={salaryAccountId} onChange={e => setSalaryAccountId(e.target.value ? Number(e.target.value) : '')}>

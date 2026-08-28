@@ -6,6 +6,7 @@ import type { Account } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Table } from '../components/ui';
 import { formatMoney, majorToMinor, minorToMajor } from '../lib/money';
 import { describeError } from '../lib/errors';
+import { useBaseCurrency } from '../lib/settings';
 
 interface Employee {
   id: number; code: string; name: string; nameEn: string | null;
@@ -16,6 +17,7 @@ interface Employee {
 }
 
 export default function EmployeesPage(): JSX.Element {
+  const baseCurrency = useBaseCurrency();
   const { t } = useTranslation();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -57,7 +59,7 @@ export default function EmployeesPage(): JSX.Element {
           { key: 'name', header: t('name') },
           { key: 'jobTitle', header: 'Job' },
           { key: 'basicSalaryMinor', header: 'Basic salary', className: 'ltr-num text-end',
-            render: r => formatMoney(r.basicSalaryMinor, 'USD') },
+            render: r => formatMoney(r.basicSalaryMinor, baseCurrency) },
           { key: 'isActive', header: t('active'), className: 'w-20', render: r => r.isActive ? '✓' : '—' },
           { key: 'actions', header: t('actions'), className: 'w-48 text-end',
             render: r => <>

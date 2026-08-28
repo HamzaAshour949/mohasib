@@ -172,6 +172,7 @@
   "noItemForBarcode": "No item for barcode: {{code}}",
   "sourceType": "Source",
   "unsavedChanges": "Unsaved changes",
+  "accumulatedDepreciation": "Accumulated depreciation",
   "errors": {
     "periodLocked": "Period is locked ({{start}} → {{end}}){{reason}}",
     "prohibitedTerm": "Contains the prohibited term “{{term}}” — riba and tax workflows are not supported.",

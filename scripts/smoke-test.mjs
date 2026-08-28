@@ -73,8 +73,19 @@ await new Promise((resolve, reject) => {
 
 let nextId = 0;
 const pending = new Map();
+// Anything the renderer throws that nobody caught. A React hooks-order
+// violation or a render crash shows up here even when the surviving DOM still
+// looks plausible.
+const rendererErrors = [];
 socket.addEventListener('message', (event) => {
   const message = JSON.parse(event.data);
+  if (message.method === 'Runtime.exceptionThrown') {
+    const details = message.params.exceptionDetails;
+    rendererErrors.push(details.exception?.description ?? details.text);
+  }
+  if (message.method === 'Runtime.consoleAPICalled' && message.params.type === 'error') {
+    rendererErrors.push(message.params.args.map((a) => a.value ?? a.description ?? '').join(' '));
+  }
   if (message.id && pending.has(message.id)) {
     pending.get(message.id)(message);
     pending.delete(message.id);
@@ -105,6 +116,8 @@ const waitFor = async (expression, timeoutMs = 15000) => {
   }
   return last;
 };
+
+await call('Runtime.enable');
 
 console.log('\nMohasib smoke test');
 console.log(`  target ${page.url}\n`);
@@ -196,6 +209,23 @@ try {
     return text;
   })()`);
   check(printable === 'printed', 'print iframe renders under the production CSP', printable);
+
+  // --- every route mounts without throwing ---
+  // A hooks-order violation or a crash in a component only shows up when that
+  // page is actually rendered, and 29 of the 30 routes are never visited by a
+  // test that only checks the landing page.
+  const routes = await evaluate('[...document.querySelectorAll("aside a")].map(a => a.getAttribute("href"))');
+  const brokenRoutes = [];
+  for (const href of routes ?? []) {
+    const hash = String(href).replace(/^#?/, '');
+    rendererErrors.length = 0;
+    await evaluate(`location.hash = ${JSON.stringify(hash)}`);
+    const mounted = await waitFor('document.querySelector("main")?.children.length > 0 && !/^\\s*$/.test(document.querySelector("main").innerText)', 8000);
+    if (mounted !== true) brokenRoutes.push(`${hash}: did not mount`);
+    else if (rendererErrors.length) brokenRoutes.push(`${hash}: ${rendererErrors[0].split('\n')[0]}`);
+  }
+  check(brokenRoutes.length === 0, `all ${routes?.length ?? 0} routes mount without throwing`, brokenRoutes);
+  await evaluate('location.hash = "#/"');
 
   // --- unsaved-changes tracking reaches the main process ---
   const dirtyAck = await evaluate('window.api.app.setDirty(true).then(r => r.ok)');

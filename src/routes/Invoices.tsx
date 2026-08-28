@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/ipc';
 import type { Cashbox, Invoice, InvoiceKind, Item, Party, PaymentMode, Warehouse } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Select, Table } from '../components/ui';
@@ -12,6 +12,7 @@ import { useIndexById, useNamesById } from '../lib/lookup';
 import { valueOf } from '@shared/domain/Inventory';
 import { describeError } from '../lib/errors';
 import { confirmDiscard, useDirtyDocument } from '../lib/dirty';
+import { useBaseCurrency } from '../lib/settings';
 
 interface EditorLine { itemId: number; qty: string; unitMajor: string; discountMajor: string; }
 
@@ -39,7 +40,12 @@ export default function InvoicesPage(): JSX.Element {
   const [warehouseId, setWarehouseId] = useState<number | ''>('');
   const [paymentMode, setPaymentMode] = useState<PaymentMode>('cash');
   const [cashboxId, setCashboxId] = useState<number | ''>('');
-  const [currency, setCurrency] = useState('USD');
+  const baseCurrency = useBaseCurrency();
+  const [currency, setCurrency] = useState(baseCurrency);
+  // Settings arrive after the first render; adopt the company currency then,
+  // unless the user has already chosen something else on this document.
+  const [currencyTouched, setCurrencyTouched] = useState(false);
+  useEffect(() => { if (!currencyTouched) setCurrency(baseCurrency); setCurrencyTouched(false); }, [baseCurrency, currencyTouched]);
   const [lines, setLines] = useState<EditorLine[]>([]);
   const [invDiscMajor, setInvDiscMajor] = useState('0');
   const [feesMajor, setFeesMajor] = useState('0');
@@ -79,7 +85,7 @@ export default function InvoicesPage(): JSX.Element {
 
   const reset = () => {
     setKind('sale'); setDate(today()); setPartyId(''); setWarehouseId(warehouses[0]?.id ?? '');
-    setPaymentMode('cash'); setCashboxId(cashboxes[0]?.id ?? ''); setCurrency('USD');
+    setPaymentMode('cash'); setCashboxId(cashboxes[0]?.id ?? ''); setCurrency(baseCurrency); setCurrencyTouched(false);
     setLines([]); setInvDiscMajor('0'); setFeesMajor('0'); setNotes('');
   };
 
@@ -289,7 +295,7 @@ export default function InvoicesPage(): JSX.Element {
               </Select>
             </div>
           )}
-          <div><Label>{t('currency')}</Label><Input value={currency} onChange={e => setCurrency(e.target.value)} /></div>
+          <div><Label>{t('currency')}</Label><Input value={currency} onChange={e => { setCurrencyTouched(true); setCurrency(e.target.value); }} /></div>
         </div>
 
         <div className="mt-4 flex items-center gap-2">

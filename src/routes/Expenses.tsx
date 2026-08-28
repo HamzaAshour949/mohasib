@@ -1,11 +1,12 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../lib/ipc';
 import type { Account, Cashbox, Party } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Select, Table } from '../components/ui';
 import { formatMoney, majorToMinor, today } from '../lib/money';
 import { describeError } from '../lib/errors';
+import { useBaseCurrency } from '../lib/settings';
 
 interface Expense {
   id: number; serial: string; date: string; partyId: number | null; partyName: string | null;
@@ -26,7 +27,12 @@ export default function ExpensesPage(): JSX.Element {
   const [expenseAccountId, setExpenseAccountId] = useState<number | ''>('');
   const [cashboxId, setCashboxId] = useState<number | ''>('');
   const [amountMajor, setAmountMajor] = useState('0');
-  const [currency, setCurrency] = useState('USD');
+  const baseCurrency = useBaseCurrency();
+  const [currency, setCurrency] = useState(baseCurrency);
+  // Settings arrive after the first render; adopt the company currency then,
+  // unless the user has already chosen something else on this document.
+  const [currencyTouched, setCurrencyTouched] = useState(false);
+  useEffect(() => { if (!currencyTouched) setCurrency(baseCurrency); setCurrencyTouched(false); }, [baseCurrency, currencyTouched]);
   const [partyId, setPartyId] = useState<number | ''>('');
   const [departmentId, setDepartmentId] = useState<number | ''>('');
   const [projectId, setProjectId] = useState<number | ''>('');
@@ -45,7 +51,7 @@ export default function ExpensesPage(): JSX.Element {
 
   const reset = (): void => {
     setDate(today()); setExpenseAccountId(''); setCashboxId(cashboxes[0]?.id ?? '');
-    setAmountMajor('0'); setCurrency('USD'); setPartyId('');
+    setAmountMajor('0'); setCurrency(baseCurrency); setCurrencyTouched(false); setPartyId('');
     setDepartmentId(''); setProjectId(''); setFunderId(''); setNotes('');
   };
 
@@ -97,7 +103,7 @@ export default function ExpensesPage(): JSX.Element {
             </Select>
           </div>
           <div><Label>{t('amount')}</Label><Input className="ltr-num text-end" value={amountMajor} onChange={e => setAmountMajor(e.target.value)} /></div>
-          <div><Label>{t('currency')}</Label><Input value={currency} onChange={e => setCurrency(e.target.value)} /></div>
+          <div><Label>{t('currency')}</Label><Input value={currency} onChange={e => { setCurrencyTouched(true); setCurrency(e.target.value); }} /></div>
           <div><Label>{t('party')}</Label>
             <Select value={partyId} onChange={e => setPartyId(e.target.value ? Number(e.target.value) : '')}>
               <option value="">—</option>

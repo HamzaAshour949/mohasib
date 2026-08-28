@@ -6,6 +6,7 @@ import type { Account } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Table } from '../components/ui';
 import { formatMoney, majorToMinor, minorToMajor, today } from '../lib/money';
 import { describeError } from '../lib/errors';
+import { useBaseCurrency } from '../lib/settings';
 
 interface Asset {
   id: number; code: string; name: string; nameEn: string | null; acqDate: string;
@@ -15,6 +16,7 @@ interface Asset {
 }
 
 export default function AssetsPage(): JSX.Element {
+  const baseCurrency = useBaseCurrency();
   const { t } = useTranslation();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -69,8 +71,8 @@ export default function AssetsPage(): JSX.Element {
           { key: 'code', header: t('code'), className: 'w-24 ltr-num' },
           { key: 'name', header: t('name') },
           { key: 'acqDate', header: t('date'), className: 'w-28 ltr-num' },
-          { key: 'costMinor', header: 'Cost', className: 'ltr-num text-end', render: r => formatMoney(r.costMinor, 'USD') },
-          { key: 'accumulatedMinor', header: 'Accumulated', className: 'ltr-num text-end', render: r => formatMoney(r.accumulatedMinor, 'USD') },
+          { key: 'costMinor', header: t('amount'), className: 'ltr-num text-end', render: r => formatMoney(r.costMinor, baseCurrency) },
+          { key: 'accumulatedMinor', header: t('accumulatedDepreciation'), className: 'ltr-num text-end', render: r => formatMoney(r.accumulatedMinor, baseCurrency) },
           { key: 'usefulLifeMonths', header: 'Life (mo)', className: 'ltr-num text-end' },
           { key: 'actions', header: t('actions'), className: 'w-72 text-end',
             render: r => <>

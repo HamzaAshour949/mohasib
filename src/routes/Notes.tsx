@@ -1,11 +1,12 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../lib/ipc';
 import type { Party } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Select, Table } from '../components/ui';
 import { formatMoney, majorToMinor, today } from '../lib/money';
 import { describeError } from '../lib/errors';
+import { useBaseCurrency } from '../lib/settings';
 
 type NoteKind = 'debit_customer' | 'credit_customer' | 'debit_supplier' | 'credit_supplier';
 
@@ -26,7 +27,12 @@ export default function NotesPage(): JSX.Element {
   const [date, setDate] = useState(today());
   const [partyId, setPartyId] = useState<number | ''>('');
   const [accountId, setAccountId] = useState<number | ''>('');
-  const [currency, setCurrency] = useState('USD');
+  const baseCurrency = useBaseCurrency();
+  const [currency, setCurrency] = useState(baseCurrency);
+  // Settings arrive after the first render; adopt the company currency then,
+  // unless the user has already chosen something else on this document.
+  const [currencyTouched, setCurrencyTouched] = useState(false);
+  useEffect(() => { if (!currencyTouched) setCurrency(baseCurrency); setCurrencyTouched(false); }, [baseCurrency, currencyTouched]);
   const [amountMajor, setAmountMajor] = useState('0');
   const [notes, setNotes] = useState('');
 
@@ -42,7 +48,7 @@ export default function NotesPage(): JSX.Element {
 
   const reset = (): void => {
     setKind('debit_customer'); setDate(today()); setPartyId(''); setAccountId('');
-    setCurrency('USD'); setAmountMajor('0'); setNotes('');
+    setCurrency(baseCurrency); setCurrencyTouched(false); setAmountMajor('0'); setNotes('');
   };
 
   const save = async (): Promise<void> => {
@@ -95,7 +101,7 @@ export default function NotesPage(): JSX.Element {
               {leafAccounts.map(a => <option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}
             </Select>
           </div>
-          <div><Label>{t('currency')}</Label><Input value={currency} onChange={e => setCurrency(e.target.value)} /></div>
+          <div><Label>{t('currency')}</Label><Input value={currency} onChange={e => { setCurrencyTouched(true); setCurrency(e.target.value); }} /></div>
           <div><Label>{t('amount')}</Label><Input className="ltr-num" value={amountMajor} onChange={e => setAmountMajor(e.target.value)} /></div>
           <div className="col-span-2"><Label>{t('notes')}</Label><Input value={notes} onChange={e => setNotes(e.target.value)} /></div>
         </div>

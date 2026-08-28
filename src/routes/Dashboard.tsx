@@ -4,6 +4,7 @@ import { api } from '../lib/ipc';
 import { formatMoney } from '../lib/money';
 import { Card, Page } from '../components/ui';
 import { gregorianToHijri } from '../lib/hijri';
+import { useBaseCurrency } from '../lib/settings';
 
 interface DashData {
   assetsMinor: string; liabilitiesMinor: string; equityMinor: string; netIncomeMinor: string;
@@ -26,9 +27,10 @@ export default function Dashboard(): JSX.Element {
     queryKey: ['dashboard'],
     queryFn: () => api.reports.dashboard() as Promise<DashData>
   });
+  // Above the early return: every hook has to run on every render.
+  const cur = useBaseCurrency();
 
   if (isLoading || !data) return <Page title={t('dashboard')}><div className="text-fg2">{tc('loading')}</div></Page>;
-  const cur = 'USD';
   const today = new Date();
   const dateLine = i18n.language === 'ar'
     ? `${today.toLocaleDateString('ar')} — ${gregorianToHijri(today)} ${tc('hijriSuffix')}`
