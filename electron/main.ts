@@ -33,7 +33,7 @@ const createWindow = (): void => {
     title: 'Mohasib',
     backgroundColor: '#0F1115',
     webPreferences: {
-      preload: path.join(__dirname, '../preload/index.mjs'),
+      preload: path.join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false

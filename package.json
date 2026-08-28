@@ -1,68 +1,56 @@
 {
   "name": "mohasib",
   "version": "2.0.0",
-  "description": "Islamic riba-free, tax-free accounting & inventory desktop app (Arabic-first)",
+  "description": "Riba-free, tax-free accounting & inventory desktop app (Arabic-first)",
   "main": "out/main/index.js",
   "author": "Hamza Ashour",
   "license": "UNLICENSED",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=20.19"
+  },
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",
-    "build:mac": "electron-vite build && electron-builder --mac --arm64 -c.compression=store",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "smoke": "npm run build && node scripts/smoke-test.mjs",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
     "postinstall": "electron-builder install-app-deps",
-    "test": "vitest run",
-    "typecheck": "tsc -b",
-    "db:gen": "drizzle-kit generate",
-    "db:migrate": "tsx electron/services/migrate-cli.ts"
+    "pack:mac": "npm run build && electron-builder --mac --arm64",
+    "pack:win": "npm run build && electron-builder --win --x64",
+    "seed:demo": "tsx scripts/seed-demo.ts"
   },
   "dependencies": {
-    "@radix-ui/react-dialog": "^1.1.2",
-    "@radix-ui/react-dropdown-menu": "^2.1.2",
-    "@radix-ui/react-label": "^2.1.0",
-    "@radix-ui/react-popover": "^1.1.2",
-    "@radix-ui/react-select": "^2.1.2",
-    "@radix-ui/react-slot": "^1.1.0",
-    "@radix-ui/react-tabs": "^1.1.1",
-    "@radix-ui/react-toast": "^1.2.2",
-    "@tanstack/react-query": "^5.59.0",
-    "@tanstack/react-table": "^8.20.5",
-    "better-sqlite3": "^11.5.0",
-    "class-variance-authority": "^0.7.0",
-    "clsx": "^2.1.1",
-    "dayjs": "^1.11.13",
-    "drizzle-orm": "^0.36.0",
-    "i18next": "^23.16.0",
-    "lucide-react": "^0.453.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "react-i18next": "^15.0.3",
-    "react-router-dom": "^6.27.0",
-    "tailwind-merge": "^2.5.4",
-    "zod": "^3.23.8",
-    "zustand": "^5.0.0"
+    "better-sqlite3": "^11.5.0"
   },
   "devDependencies": {
     "@electron/rebuild": "^3.7.0",
+    "@tanstack/react-query": "^5.59.0",
     "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^22.7.5",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.2",
     "autoprefixer": "^10.4.20",
-    "drizzle-kit": "^0.28.0",
     "electron": "^32.1.2",
     "electron-builder": "^25.0.5",
     "electron-vite": "^2.3.0",
+    "i18next": "^23.16.0",
     "postcss": "^8.4.47",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-i18next": "^15.0.3",
+    "react-router-dom": "^6.27.0",
     "tailwindcss": "^3.4.13",
     "tsx": "^4.19.1",
     "typescript": "^5.6.2",
     "vite": "^5.4.8",
-    "vitest": "^2.1.2"
+    "vitest": "^2.1.2",
+    "zod": "^3.23.8"
   },
   "build": {
     "appId": "com.mohasib.app",
@@ -73,6 +61,7 @@
     },
     "files": [
       "out/**/*",
+      "!out/**/*.map",
       "package.json"
     ],
     "asarUnpack": [
@@ -80,17 +69,23 @@
     ],
     "mac": {
       "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "arm64"
-          ]
-        }
+        { "target": "dmg", "arch": ["arm64"] },
+        { "target": "zip", "arch": ["arm64"] }
       ],
       "category": "public.app-category.finance",
       "identity": null,
       "hardenedRuntime": false,
       "gatekeeperAssess": false
+    },
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "zip", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
     }
   }
 }

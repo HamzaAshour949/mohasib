@@ -2,6 +2,7 @@ node_modules/
 out/
 release/
 dist/
+coverage/
 .DS_Store
 *.log
 _v1_qt/
@@ -9,3 +10,7 @@ aseel_book/
 .vite/
 .cache/
 *.tsbuildinfo
+
+# Hand-off notes produced for the maintainer's local machine, not project files.
+prompt.md
+local-sync.md
