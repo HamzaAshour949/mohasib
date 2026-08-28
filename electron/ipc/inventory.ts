@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import { db } from '../services/db';
 import { audit } from '../services/audit';
 import { ITEM_COLS, WAREHOUSE_COLS, CASHBOX_COLS } from '../services/columns';
+import { baseCurrency } from '../services/settings';
 import type { Item, Warehouse, Cashbox, SaveResult } from '@shared/types';
 
 interface ItemRaw {
@@ -21,6 +22,15 @@ const mapItem = (r: ItemRaw): Item => ({
 });
 
 interface ItemInput extends Partial<Item> { id?: number }
+
+/** Refuse a delete that another table still points at, naming the table. */
+const guardReferences = (id: number, references: Array<[string, string]>): SaveResult | null => {
+  for (const [table, column] of references) {
+    const row = db().prepare(`SELECT 1 FROM ${table} WHERE ${column} = ? LIMIT 1`).get(id);
+    if (row) return { ok: false, error: `Still referenced by ${table} — cannot delete` };
+  }
+  return null;
+};
 
 export const registerItems = (): void => {
   ipcMain.handle('items:list', () => {
@@ -45,7 +55,7 @@ export const registerItems = (): void => {
         it.code, it.barcode ?? null, it.name, it.nameEn ?? null, it.unit ?? 'pcs',
         sp[0], sp[1], sp[2], sp[3], sp[4],
         pp[0], pp[1], pp[2], pp[3], pp[4],
-        it.currency ?? 'USD', it.minQty ?? '0', it.reorderQty ?? '0', it.maxQty ?? '0',
+        it.currency || baseCurrency(), it.minQty ?? '0', it.reorderQty ?? '0', it.maxQty ?? '0',
         it.itemType ?? 'stock', it.notes ?? null, it.id
       );
       audit('update', 'item', it.id, it);
@@ -59,7 +69,7 @@ export const registerItems = (): void => {
       it.code, it.barcode ?? null, it.name, it.nameEn ?? null, it.unit ?? 'pcs',
       sp[0], sp[1], sp[2], sp[3], sp[4],
       pp[0], pp[1], pp[2], pp[3], pp[4],
-      it.currency ?? 'USD', it.minQty ?? '0', it.reorderQty ?? '0', it.maxQty ?? '0',
+      it.currency || baseCurrency(), it.minQty ?? '0', it.reorderQty ?? '0', it.maxQty ?? '0',
       it.itemType ?? 'stock', it.notes ?? null
     );
     const id = Number(r.lastInsertRowid);
@@ -68,9 +78,30 @@ export const registerItems = (): void => {
   });
 
   ipcMain.handle('items:delete', (_e, id: number): SaveResult => {
-    const used = db().prepare('SELECT COUNT(*) AS n FROM invoice_lines WHERE item_id = ?').get(id) as { n: number };
-    if (used.n > 0) return { ok: false, error: 'Item used in invoices — cannot delete' };
-    db().prepare('DELETE FROM items WHERE id = ?').run(id);
+    // Only invoice_lines was checked. An item used on a quote, an order, a
+    // stock movement or a manufacturing formula hit a raw foreign-key error,
+    // and item_stock cascades — so an item with stock on hand deleted its own
+    // stock rows and the inventory value silently dropped.
+    const guard = guardReferences(id, [
+      ['invoice_lines', 'item_id'],
+      ['quote_lines', 'item_id'],
+      ['order_lines', 'item_id'],
+      ['stock_movement_lines', 'item_id'],
+      ['manufacturing_formulas', 'output_item_id'],
+      ['manufacturing_formula_lines', 'item_id']
+    ]);
+    if (guard) return guard;
+
+    const onHand = db().prepare(
+      `SELECT COALESCE(SUM(CAST(qty AS REAL)), 0) AS qty FROM item_stock WHERE item_id = ?`
+    ).get(id) as { qty: number };
+    if (Math.abs(onHand.qty) > 1e-9) return { ok: false, error: `Item still has ${onHand.qty} in stock — cannot delete` };
+
+    try {
+      db().prepare('DELETE FROM items WHERE id = ?').run(id);
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
     audit('delete', 'item', id);
     return { ok: true };
   });
@@ -100,6 +131,34 @@ export const registerWarehouses = (): void => {
       .run(w.code, w.name, w.nameEn ?? null, w.isDefault ?? 0);
     return { ok: true, id: Number(r.lastInsertRowid) };
   });
+
+  // The preload exposed warehouses.delete and cashboxes.delete with no handler
+  // behind either, so calling them rejected with 'No handler registered'.
+  ipcMain.handle('warehouses:delete', (_e, id: number): SaveResult => {
+    const guard = guardReferences(id, [
+      ['invoices', 'warehouse_id'],
+      ['orders', 'warehouse_id'],
+      ['stock_movements', 'from_warehouse_id'],
+      ['stock_movements', 'to_warehouse_id'],
+      ['manufacturing_runs', 'warehouse_id']
+    ]);
+    if (guard) return guard;
+
+    // item_stock cascades on delete, so a warehouse holding stock would take
+    // the quantities with it and inventory value would drop with no trace.
+    const stocked = db().prepare(
+      `SELECT COALESCE(SUM(CAST(qty AS REAL)), 0) AS qty FROM item_stock WHERE warehouse_id = ?`
+    ).get(id) as { qty: number };
+    if (Math.abs(stocked.qty) > 1e-9) return { ok: false, error: 'Warehouse still holds stock — cannot delete' };
+
+    try {
+      db().prepare('DELETE FROM warehouses WHERE id = ?').run(id);
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+    audit('delete', 'warehouse', id);
+    return { ok: true };
+  });
 };
 
 export const registerCashboxes = (): void => {
@@ -114,7 +173,24 @@ export const registerCashboxes = (): void => {
       return { ok: true, id: c.id };
     }
     const r = db().prepare('INSERT INTO cashboxes (code, name, currency, account_id, is_default) VALUES (?, ?, ?, ?, ?)')
-      .run(c.code, c.name, c.currency, c.accountId, c.isDefault ?? 0);
+      .run(c.code, c.name, c.currency || baseCurrency(), c.accountId, c.isDefault ?? 0);
     return { ok: true, id: Number(r.lastInsertRowid) };
+  });
+
+  ipcMain.handle('cashboxes:delete', (_e, id: number): SaveResult => {
+    const guard = guardReferences(id, [
+      ['invoices', 'cashbox_id'],
+      ['vouchers', 'cashbox_id'],
+      ['cheques', 'cashbox_id'],
+      ['multi_vouchers', 'cashbox_id']
+    ]);
+    if (guard) return guard;
+    try {
+      db().prepare('DELETE FROM cashboxes WHERE id = ?').run(id);
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+    audit('delete', 'cashbox', id);
+    return { ok: true };
   });
 };

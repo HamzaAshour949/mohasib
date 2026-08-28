@@ -57,6 +57,8 @@ export const invokeIpc = async <T>(channel: string, ...args: unknown[]): Promise
 };
 
 export const setUserDataDir = (dir: string): void => { userDataDir = dir; };
+/** Every channel the main process has registered a handler for. */
+export const registeredChannels = (): string[] => [...handlers.keys()];
 export const resetIpc = (): void => { handlers.clear(); };
 
 export default { app, ipcMain, BrowserWindow, dialog, shell, session, Menu, contextBridge, ipcRenderer };
