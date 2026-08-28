@@ -8,6 +8,7 @@ import { formatMoney, majorToMinor, minorToMajor, today } from '../lib/money';
 import { exportRows } from '../lib/csv';
 import { printHtml, escapeHtml } from '../lib/print';
 import { useBarcodeScanner } from '../lib/barcode';
+import { useIndexById, useNamesById } from '../lib/lookup';
 
 interface EditorLine { itemId: number; qty: string; unitMajor: string; discountMajor: string; }
 
@@ -44,6 +45,11 @@ export default function InvoicesPage(): JSX.Element {
   });
   const { data: parties = [] } = useQuery<Party[]>({ queryKey: ['parties'], queryFn: () => api.parties.list() as Promise<Party[]> });
   const { data: items = [] } = useQuery<Item[]>({ queryKey: ['items'], queryFn: () => api.items.list() as Promise<Item[]> });
+  const partyName = useNamesById(parties, p => p.name);
+  const partyById = useIndexById(parties, p => Number(p.id));
+  const itemById = useIndexById(items, i => Number(i.id));
+  const itemByBarcode = useIndexById(items, i => i.barcode ?? `\u0000${i.id}`);
+  const itemByCode = useIndexById(items, i => i.code);
   const { data: warehouses = [] } = useQuery<Warehouse[]>({ queryKey: ['warehouses'], queryFn: () => api.warehouses.list() as Promise<Warehouse[]> });
   const { data: cashboxes = [] } = useQuery<Cashbox[]>({ queryKey: ['cashboxes'], queryFn: () => api.cashboxes.list() as Promise<Cashbox[]> });
 
@@ -78,7 +84,7 @@ export default function InvoicesPage(): JSX.Element {
   const rmLine = (i: number) => setLines(lines.filter((_, idx) => idx !== i));
 
   const onItemPick = (i: number, itemId: number) => {
-    const it = items.find(x => x.id === itemId);
+    const it = itemById.get(itemId);
     if (!it) return updLine(i, { itemId });
     const def = kind === 'sale' || kind === 'sale_return' ? it.salePrices[0] : it.purchasePrices[0];
     updLine(i, { itemId, unitMajor: minorToMajor(def) });
@@ -87,7 +93,7 @@ export default function InvoicesPage(): JSX.Element {
   // Barcode scanner: when modal open, scan a barcode → add (or increment) line for that item.
   useBarcodeScanner({
     onScan: (code) => {
-      const it = items.find(x => x.barcode === code || x.code === code);
+      const it = itemByBarcode.get(code) ?? itemByCode.get(code);
       if (!it) {
         // eslint-disable-next-line no-alert
         alert(`${i18n.language === 'ar' ? 'لا يوجد صنف بالباركود' : 'No item for barcode'}: ${code}`);
@@ -111,7 +117,7 @@ export default function InvoicesPage(): JSX.Element {
       { header: 'Serial', value: r => r.serial },
       { header: 'Date', value: r => r.date },
       { header: 'Kind', value: r => r.kind },
-      { header: 'Party', value: r => parties.find(p => p.id === r.partyId)?.name ?? '' },
+      { header: 'Party', value: r => partyName(r.partyId) },
       { header: 'Payment', value: r => r.paymentMode },
       { header: 'Currency', value: r => r.currency },
       { header: 'Subtotal', value: r => minorToMajor(r.subtotalMinor) },
@@ -124,7 +130,7 @@ export default function InvoicesPage(): JSX.Element {
   const printOne = async (id: number): Promise<void> => {
     const inv = await api.invoices.get(id) as (Invoice & { lines: Array<{ itemCode: string; itemName: string; qty: string; unitPriceMinor: string; discountMinor: string; totalMinor: string }> }) | undefined;
     if (!inv) return;
-    const party = parties.find(p => p.id === inv.partyId);
+    const party = partyById.get(inv.partyId);
     const lang = i18n.language === 'ar' ? 'ar' : 'en';
     const kindLabel = KIND_LABELS[inv.kind][lang];
     const head = `
@@ -212,7 +218,7 @@ export default function InvoicesPage(): JSX.Element {
           { key: 'serial', header: t('reference'), className: 'ltr-num w-32' },
           { key: 'date', header: t('date'), className: 'ltr-num w-28' },
           { key: 'kind', header: tf('kind'), render: r => KIND_LABELS[r.kind][i18n.language === 'ar' ? 'ar' : 'en'] },
-          { key: 'partyId', header: tf('party'), render: r => parties.find(p => p.id === r.partyId)?.name ?? '' },
+          { key: 'partyId', header: tf('party'), render: r => partyName(r.partyId) },
           { key: 'paymentMode', header: tf('kind'), render: r => r.paymentMode === 'cash' ? t('cash') : t('creditMode') },
           { key: 'grandTotalMinor', header: t('grandTotal'), className: 'ltr-num text-end',
             render: r => formatMoney(r.grandTotalMinor, r.currency) },

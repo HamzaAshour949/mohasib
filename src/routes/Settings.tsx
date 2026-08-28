@@ -5,6 +5,7 @@ import { api } from '../lib/ipc';
 import type { Account, AppSettings } from '@shared/types';
 import { Btn, Card, Input, Label, Modal, Page, Select, Table } from '../components/ui';
 import { today } from '../lib/money';
+import { useNamesById } from '../lib/lookup';
 
 interface PeriodLock { id: number; startDate: string; endDate: string; reason: string | null; lockedAt: string }
 interface ExpCat { id: number; code: string; name: string; nameEn: string | null; accountId: number }
@@ -164,7 +165,8 @@ const ExpenseCategoriesSection: React.FC = () => {
     void qc.invalidateQueries({ queryKey: ['expCats'] });
   };
 
-  const acctName = (id: number): string => accounts.find(a => a.id === id)?.name ?? `#${id}`;
+  const lookupAcct = useNamesById(accounts, a => a.name);
+  const acctName = (id: number): string => lookupAcct(id) || `#${id}`;
 
   return (
     <Card className="mt-4">

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Link, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
@@ -7,35 +7,40 @@ import { api } from './lib/ipc';
 import { runViewAction } from './lib/view-actions';
 import { confirmDiscard } from './lib/dirty';
 import type { MenuMessage } from '@shared/ipc-channels';
-import Dashboard from './routes/Dashboard';
-import AccountsPage from './routes/Accounts';
-import PartiesPage from './routes/Parties';
-import ItemsPage from './routes/Items';
-import WarehousesPage from './routes/Warehouses';
-import CashboxesPage from './routes/Cashboxes';
-import InvoicesPage from './routes/Invoices';
-import VouchersPage from './routes/Vouchers';
-import ChequesPage from './routes/Cheques';
-import JournalPage from './routes/Journal';
-import ReportsPage from './routes/Reports';
-import SettingsPage from './routes/Settings';
-import DepartmentsPage from './routes/Departments';
-import ProjectsPage from './routes/Projects';
-import FundersPage from './routes/Funders';
-import CurrenciesPage from './routes/Currencies';
-import StockMovementsPage from './routes/StockMovements';
-import QuotesPage from './routes/Quotes';
-import OrdersPage from './routes/Orders';
-import ExpensesPage from './routes/Expenses';
-import EmployeesPage from './routes/Employees';
-import PayrollPage from './routes/Payroll';
-import AssetsPage from './routes/Assets';
-import AuditReportPage from './routes/AuditReport';
-import BanksPage from './routes/Banks';
-import NotesPage from './routes/Notes';
-import MultiVouchersPage from './routes/MultiVouchers';
-import ManufacturingPage from './routes/Manufacturing';
-import BudgetsPage from './routes/Budgets';
+
+// Every route was imported eagerly into a single 756 kB startup chunk, so
+// opening the dashboard downloaded and parsed the reports module, the
+// manufacturing module and 26 others before it could paint. Lazy imports let
+// Rollup emit one chunk per route and the app loads what it shows.
+const Dashboard = lazy(() => import('./routes/Dashboard'));
+const AccountsPage = lazy(() => import('./routes/Accounts'));
+const PartiesPage = lazy(() => import('./routes/Parties'));
+const ItemsPage = lazy(() => import('./routes/Items'));
+const WarehousesPage = lazy(() => import('./routes/Warehouses'));
+const CashboxesPage = lazy(() => import('./routes/Cashboxes'));
+const InvoicesPage = lazy(() => import('./routes/Invoices'));
+const VouchersPage = lazy(() => import('./routes/Vouchers'));
+const ChequesPage = lazy(() => import('./routes/Cheques'));
+const JournalPage = lazy(() => import('./routes/Journal'));
+const ReportsPage = lazy(() => import('./routes/Reports'));
+const SettingsPage = lazy(() => import('./routes/Settings'));
+const DepartmentsPage = lazy(() => import('./routes/Departments'));
+const ProjectsPage = lazy(() => import('./routes/Projects'));
+const FundersPage = lazy(() => import('./routes/Funders'));
+const CurrenciesPage = lazy(() => import('./routes/Currencies'));
+const StockMovementsPage = lazy(() => import('./routes/StockMovements'));
+const QuotesPage = lazy(() => import('./routes/Quotes'));
+const OrdersPage = lazy(() => import('./routes/Orders'));
+const ExpensesPage = lazy(() => import('./routes/Expenses'));
+const EmployeesPage = lazy(() => import('./routes/Employees'));
+const PayrollPage = lazy(() => import('./routes/Payroll'));
+const AssetsPage = lazy(() => import('./routes/Assets'));
+const AuditReportPage = lazy(() => import('./routes/AuditReport'));
+const BanksPage = lazy(() => import('./routes/Banks'));
+const NotesPage = lazy(() => import('./routes/Notes'));
+const MultiVouchersPage = lazy(() => import('./routes/MultiVouchers'));
+const ManufacturingPage = lazy(() => import('./routes/Manufacturing'));
+const BudgetsPage = lazy(() => import('./routes/Budgets'));
 
 const NAV: Array<{ to: string; key: string }> = [
   { to: '/', key: 'dashboard' },
@@ -206,6 +211,7 @@ export default function App(): JSX.Element {
       <div className="flex-1 flex flex-col overflow-hidden">
         <Header />
         <main className="flex-1 overflow-auto">
+          <Suspense fallback={<div className="p-6 text-fg2 text-sm">{t('loading')}</div>}>
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/accounts" element={<AccountsPage />} />
@@ -237,6 +243,7 @@ export default function App(): JSX.Element {
             <Route path="/audit" element={<AuditReportPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>
+          </Suspense>
         </main>
       </div>
       {groupNotes && (

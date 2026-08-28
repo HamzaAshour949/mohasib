@@ -5,6 +5,7 @@ import { api } from '../lib/ipc';
 import type { Account, Cashbox } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Select, Table } from '../components/ui';
 import { formatMoney, majorToMinor, today } from '../lib/money';
+import { useIndexById, useNamesById } from '../lib/lookup';
 
 interface Employee { id: number; code: string; name: string; basicSalaryMinor: string; allowanceMinor: string; payableAccountId: number | null }
 interface Sheet {
@@ -32,6 +33,7 @@ export default function PayrollPage(): JSX.Element {
   const { data: employees = [] } = useQuery<Employee[]>({ queryKey: ['employees'], queryFn: () => api.employees.list() as Promise<Employee[]> });
   const { data: accounts = [] } = useQuery<Account[]>({ queryKey: ['accounts'], queryFn: () => api.accounts.list() as Promise<Account[]> });
   const { data: cashboxes = [] } = useQuery<Cashbox[]>({ queryKey: ['cashboxes'], queryFn: () => api.cashboxes.list() as Promise<Cashbox[]> });
+  const cashboxById = useIndexById(cashboxes, c => Number(c.id));
   const expAccts = accounts.filter(a => a.type === 'expense');
   const liabAccts = accounts.filter(a => a.type === 'liability');
 
@@ -50,7 +52,7 @@ export default function PayrollPage(): JSX.Element {
 
   const save = async (): Promise<void> => {
     if (!salaryAccountId || !payableAccountId || lines.length === 0) { alert('Required fields missing'); return; }
-    const cashbox = cashboxes.find(c => c.id === Number(paymentCashboxId));
+    const cashbox = cashboxById.get(Number(paymentCashboxId));
     const r = await api.payroll.save({
       period, date, currency,
       salaryAccountId: Number(salaryAccountId), payableAccountId: Number(payableAccountId),
@@ -70,7 +72,8 @@ export default function PayrollPage(): JSX.Element {
     void qc.invalidateQueries({ queryKey: ['payroll'] });
   };
 
-  const empName = (id: number): string => employees.find(e => e.id === id)?.name ?? `#${id}`;
+  const lookupEmp = useNamesById(employees, e => e.name);
+  const empName = (id: number): string => lookupEmp(id) || `#${id}`;
 
   return (
     <Page title={t('payroll')} toolbar={<Btn onClick={() => { reset(); setOpen(true); }}>{t('new')}</Btn>}>

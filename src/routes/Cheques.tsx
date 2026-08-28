@@ -5,6 +5,7 @@ import { api } from '../lib/ipc';
 import type { Cashbox, Cheque, ChequeStatus, Party } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Select, Table } from '../components/ui';
 import { formatMoney, majorToMinor, today } from '../lib/money';
+import { useNamesById } from '../lib/lookup';
 
 export default function ChequesPage(): JSX.Element {
   const { t } = useTranslation();
@@ -19,6 +20,7 @@ export default function ChequesPage(): JSX.Element {
 
   const { data: cheques = [] } = useQuery<Cheque[]>({ queryKey: ['cheques'], queryFn: () => api.cheques.list() as Promise<Cheque[]> });
   const { data: parties = [] } = useQuery<Party[]>({ queryKey: ['parties'], queryFn: () => api.parties.list() as Promise<Party[]> });
+  const partyName = useNamesById(parties, p => p.name);
   const { data: cashboxes = [] } = useQuery<Cashbox[]>({ queryKey: ['cashboxes'], queryFn: () => api.cashboxes.list() as Promise<Cashbox[]> });
   const { data: banks = [] } = useQuery<Array<{ id: number; name: string; branch: string | null }>>({ queryKey: ['banks'], queryFn: () => api.banks.list() as Promise<Array<{ id: number; name: string; branch: string | null }>> });
 
@@ -50,7 +52,7 @@ export default function ChequesPage(): JSX.Element {
           { key: 'serial', header: t('reference'), className: 'ltr-num w-32' },
           { key: 'number', header: tf('chequeNumber'), className: 'ltr-num w-28' },
           { key: 'direction', header: tf('direction'), render: r => r.direction === 'in' ? tf('in') : tf('out') },
-          { key: 'partyId', header: tf('party'), render: r => parties.find(p => p.id === r.partyId)?.name ?? '' },
+          { key: 'partyId', header: tf('party'), render: r => partyName(r.partyId) },
           { key: 'dueDate', header: tf('dueDate'), className: 'ltr-num w-28' },
           { key: 'amountMinor', header: t('amount'), className: 'ltr-num text-end',
             render: r => formatMoney(r.amountMinor, r.currency) },

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useState } from 'react';
 import { api } from '../lib/ipc';
 import { Btn, Input, Label, Modal, Page, Table } from '../components/ui';
+import { useNamesById } from '../lib/lookup';
 
 interface Project { id: number; code: string; name: string; nameEn: string | null; departmentId: number | null; isActive: number }
 interface Dept { id: number; code: string; name: string }
@@ -16,7 +17,8 @@ export default function ProjectsPage(): JSX.Element {
   const { data = [] } = useQuery<Project[]>({ queryKey: ['projects'], queryFn: () => api.projects.list() as Promise<Project[]> });
   const { data: depts = [] } = useQuery<Dept[]>({ queryKey: ['departments'], queryFn: () => api.departments.list() as Promise<Dept[]> });
 
-  const deptName = (id: number | null): string => depts.find(d => d.id === id)?.name ?? '—';
+  const lookupDept = useNamesById(depts, d => d.name);
+  const deptName = (id: number | null): string => lookupDept(id) || '—';
 
   const save = async (): Promise<void> => {
     const r = await api.projects.save(editing) as { ok: boolean; error?: string };

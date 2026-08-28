@@ -5,6 +5,7 @@ import { api } from '../lib/ipc';
 import type { Cashbox, Party, Voucher, VoucherKind } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Select, Table } from '../components/ui';
 import { formatMoney, majorToMinor, today } from '../lib/money';
+import { useNamesById } from '../lib/lookup';
 
 export default function VouchersPage(): JSX.Element {
   const { t } = useTranslation();
@@ -23,6 +24,7 @@ export default function VouchersPage(): JSX.Element {
 
   const { data: vouchers = [] } = useQuery<Voucher[]>({ queryKey: ['vouchers'], queryFn: () => api.vouchers.list() as Promise<Voucher[]> });
   const { data: parties = [] } = useQuery<Party[]>({ queryKey: ['parties'], queryFn: () => api.parties.list() as Promise<Party[]> });
+  const partyName = useNamesById(parties, p => p.name);
   const { data: cashboxes = [] } = useQuery<Cashbox[]>({ queryKey: ['cashboxes'], queryFn: () => api.cashboxes.list() as Promise<Cashbox[]> });
 
   const filteredParties = parties.filter(p => kind === 'receipt'
@@ -48,7 +50,7 @@ export default function VouchersPage(): JSX.Element {
           { key: 'serial', header: t('reference'), className: 'ltr-num w-32' },
           { key: 'date', header: t('date'), className: 'ltr-num w-28' },
           { key: 'kind', header: tf('kind'), render: r => r.kind === 'receipt' ? tf('receipt') : tf('payment') },
-          { key: 'partyId', header: tf('party'), render: r => parties.find(p => p.id === r.partyId)?.name ?? '' },
+          { key: 'partyId', header: tf('party'), render: r => partyName(r.partyId) },
           { key: 'amountMinor', header: t('amount'), className: 'text-end ltr-num',
             render: r => formatMoney(r.amountMinor, r.currency) }
         ]}

@@ -146,15 +146,23 @@ try {
   const csp = await evaluate('document.querySelector(\'meta[http-equiv="Content-Security-Policy"]\')?.content ?? ""');
   check(/script-src 'self'/.test(csp) && !/unsafe-eval/.test(csp), 'strict CSP is present in the production page', csp);
 
-  // --- routing works and pages mount ---
+  // --- routing works and lazily-loaded route chunks actually arrive ---
+  // Routes are split into their own chunks, so a page can now fail by never
+  // resolving its import — leaving the Suspense fallback on screen forever.
+  // Asserting on the page's own content, not just the header, catches that.
   await evaluate('location.hash = "#/invoices"');
-  const invoicesHeading = await waitFor('document.querySelector("header h1")?.innerText || ""');
-  check(typeof invoicesHeading === 'string' && invoicesHeading.length > 0, 'navigating to /invoices renders a page', invoicesHeading);
+  const invoicesReady = await waitFor('document.querySelectorAll("main table thead th").length > 0');
+  check(invoicesReady === true, 'lazily-loaded invoices route mounts its content');
+  const invoicesHeading = await evaluate('document.querySelector("header h1")?.innerText || ""');
+  check(typeof invoicesHeading === 'string' && invoicesHeading.length > 0, 'invoices page has a heading', invoicesHeading);
+
+  await evaluate('location.hash = "#/reports"');
+  const reportsReady = await waitFor('document.querySelector("main")?.innerText.trim().length > 20');
+  check(reportsReady === true, 'lazily-loaded reports route mounts its content');
 
   await evaluate('location.hash = "#/journal"');
-  await waitFor('document.querySelector("header h1")?.innerText');
-  const journalRows = await evaluate('document.querySelectorAll("table").length');
-  check(journalRows > 0, 'journal page renders its table', journalRows);
+  const journalReady = await waitFor('document.querySelectorAll("main table").length > 0');
+  check(journalReady === true, 'journal page renders its table');
 
   // --- language switch flips the whole document, including direction ---
   await evaluate('window.localStorage.setItem("lang","en")');
