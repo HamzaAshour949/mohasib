@@ -121,7 +121,7 @@ export const registerInvoices = (): void => {
         if (!l.itemId || !Number.isFinite(qty) || qty <= 0) throw new AppError('invalidLine', {}, 'Invalid invoice line');
         const unit = BigInt(l.unitPriceMinor || '0');
         const disc = BigInt(l.discountMinor || '0');
-        const total = unit * BigInt(Math.round(qty * 100)) / 100n - disc;
+        const total = valueOf(unit, qty) - disc;
         subtotal += total;
         return { itemId: l.itemId, qty, unit, disc, total };
       });

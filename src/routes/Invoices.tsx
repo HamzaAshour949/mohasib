@@ -4,11 +4,12 @@ import { useMemo, useState } from 'react';
 import { api } from '../lib/ipc';
 import type { Cashbox, Invoice, InvoiceKind, Item, Party, PaymentMode, Warehouse } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Select, Table } from '../components/ui';
-import { formatMoney, majorToMinor, minorToMajor, today } from '../lib/money';
+import { formatMoney, majorToMinor, minorToMajor, parseQty, today } from '../lib/money';
 import { exportRows } from '../lib/csv';
 import { printHtml, escapeHtml } from '../lib/print';
 import { useBarcodeScanner } from '../lib/barcode';
 import { useIndexById, useNamesById } from '../lib/lookup';
+import { valueOf } from '@shared/domain/Inventory';
 import { describeError } from '../lib/errors';
 import { confirmDiscard, useDirtyDocument } from '../lib/dirty';
 
@@ -67,10 +68,10 @@ export default function InvoicesPage(): JSX.Element {
   const subtotalMinor = useMemo(() => {
     let s = 0n;
     for (const l of lines) {
-      const qty = parseFloat(l.qty || '0');
+      const qty = parseQty(l.qty);
       const unit = BigInt(majorToMinor(l.unitMajor));
       const disc = BigInt(majorToMinor(l.discountMajor));
-      s += unit * BigInt(Math.round(qty * 100)) / 100n - disc;
+      s += valueOf(unit, qty) - disc;
     }
     return s;
   }, [lines]);
@@ -125,7 +126,7 @@ export default function InvoicesPage(): JSX.Element {
         const idx = prev.findIndex(l => l.itemId === it.id);
         if (idx >= 0) {
           const copy = [...prev];
-          copy[idx] = { ...copy[idx], qty: String(parseFloat(copy[idx].qty || '0') + 1) };
+          copy[idx] = { ...copy[idx], qty: String(parseQty(copy[idx].qty) + 1) };
           return copy;
         }
         return [...prev, { itemId: it.id, qty: '1', unitMajor: minorToMajor(def), discountMajor: '0' }];
@@ -309,10 +310,10 @@ export default function InvoicesPage(): JSX.Element {
             </thead>
             <tbody>
               {lines.map((l, i) => {
-                const qty = parseFloat(l.qty || '0');
+                const qty = parseQty(l.qty);
                 const unit = BigInt(majorToMinor(l.unitMajor));
                 const disc = BigInt(majorToMinor(l.discountMajor));
-                const total = unit * BigInt(Math.round(qty * 100)) / 100n - disc;
+                const total = valueOf(unit, qty) - disc;
                 return (
                   <tr key={i} className="border-t border-line">
                     <td className="py-1.5">

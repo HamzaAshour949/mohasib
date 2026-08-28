@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import { db } from '../services/db';
 import { isDebitNormal, type AccountType } from '@shared/domain/Account';
+import { valueOf } from '@shared/domain/Inventory';
 
 interface TBRow {
   id: number; code: string; name: string; type: AccountType;
@@ -122,7 +123,7 @@ export const registerReports = (): void => {
       ORDER BY i.code
     `).all().map((r: unknown) => {
       const row = r as { itemId:number; code:string; name:string; unit:string; unitCostMinor:string; qty:number };
-      const stockValue = (BigInt(row.unitCostMinor || '0') * BigInt(Math.round(row.qty * 100))) / 100n;
+      const stockValue = valueOf(BigInt(row.unitCostMinor || '0'), row.qty);
       return { ...row, stockValueMinor: stockValue.toString() };
     });
   });

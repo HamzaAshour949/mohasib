@@ -229,6 +229,27 @@ try {
   check(lineAdded === true, 'adding an invoice line renders a line row');
   const marked = await waitFor('!!document.querySelector(\'[data-unsaved="true"]\')');
   check(marked === true, 'an edited document is marked unsaved');
+
+  // --- typing into a money field must not take the page down ---
+  // Line totals are computed during render, straight off the raw input.
+  const survivedBadInput = await evaluate(`(async () => {
+    const setValue = (el, value) => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      setter.call(el, value);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    const inputs = [...document.querySelectorAll('.fixed table tbody input')];
+    if (inputs.length < 2) return 'no line inputs';
+    for (const bad of ['abc', '1a', '--', '1.2.3', '1e5', ' ']) {
+      setValue(inputs[0], bad);
+      setValue(inputs[1], bad);
+      await new Promise(r => setTimeout(r, 30));
+      if (!document.querySelector('.fixed')) return 'editor disappeared on ' + JSON.stringify(bad);
+      if (!document.getElementById('root')?.firstChild) return 'render crashed on ' + JSON.stringify(bad);
+    }
+    return 'ok';
+  })()`);
+  check(survivedBadInput === 'ok', 'invalid input in a quantity or price field does not crash the page', survivedBadInput);
 } catch (error) {
   check(false, 'smoke run completed', error.message);
 }
