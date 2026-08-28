@@ -4,7 +4,10 @@
 
 import { ipcMain, dialog, BrowserWindow } from 'electron';
 import { copyFileSync } from 'node:fs';
-import { db, dbPath } from '../services/db';
+import { db, dbPath, openCompany, closeDb } from '../services/db';
+import { runMigrations } from '../services/migrations';
+import { assertRestorableDatabase, dropWalSidecars, replaceDatabaseFile } from '../services/sqlite-file';
+import { S } from '../strings';
 import { audit } from '../services/audit';
 import { postJournal, nextSerial } from '../services/posting';
 import { requirePeriodOpen } from '../services/period';
@@ -1195,14 +1198,16 @@ export const registerPeriodLocks = (): void => {
 export const registerBackup = (): void => {
   ipcMain.handle('backup:save', async () => {
     const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    const s = S();
     const res = await dialog.showSaveDialog(win!, {
-      title: 'Backup database',
+      title: s.backupTitle,
       defaultPath: `mohasib-backup-${new Date().toISOString().slice(0, 10)}.db`,
-      filters: [{ name: 'SQLite DB', extensions: ['db'] }]
+      filters: [{ name: s.sqliteFiles, extensions: ['db'] }]
     });
     if (res.canceled || !res.filePath) return { ok: false, error: 'cancelled' };
     try {
-      // Use SQLite's online backup API for safety
+      // SQLite's online backup API, so the copy includes everything still
+      // sitting in the write-ahead log.
       await db().backup(res.filePath);
       return { ok: true, path: res.filePath };
     } catch (e) {
@@ -1212,33 +1217,65 @@ export const registerBackup = (): void => {
 
   ipcMain.handle('backup:restore', async () => {
     const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    const s = S();
     const res = await dialog.showOpenDialog(win!, {
-      title: 'Restore database',
+      title: s.restoreTitle,
       properties: ['openFile'],
-      filters: [{ name: 'SQLite DB', extensions: ['db'] }]
+      filters: [{ name: s.sqliteFiles, extensions: ['db'] }]
     });
     if (res.canceled || !res.filePaths[0]) return { ok: false, error: 'cancelled' };
+
+    try {
+      assertRestorableDatabase(res.filePaths[0]);
+    } catch (e) {
+      return { ok: false, error: `${s.notADatabase} (${(e as Error).message})` };
+    }
+
     const confirm = await dialog.showMessageBox(win!, {
       type: 'warning',
-      buttons: ['Cancel', 'Replace'],
+      buttons: [s.cancel, s.replace],
       defaultId: 0,
       cancelId: 0,
-      message: 'Restoring will replace your current data.',
-      detail: 'A safety copy of the current DB will be saved next to it before replacement. Continue?'
+      message: s.restoreWarning,
+      detail: s.restoreWarningDetail
     });
     if (confirm.response !== 1) return { ok: false, error: 'cancelled' };
+
+    const current = dbPath();
+    const safety = `${current}.before-restore-${Date.now()}.db`;
     try {
-      const cur = dbPath();
-      const safety = `${cur}.before-restore-${Date.now()}.db`;
-      copyFileSync(cur, safety);
-      copyFileSync(res.filePaths[0], cur);
-      // Ask user to relaunch
+      // Safety copy through the backup API, not copyFileSync: the database is
+      // in WAL mode, so a raw copy of the main file silently omits every
+      // committed page still in the -wal — the fallback would be missing
+      // exactly the recent work the user is most likely to want back.
+      await db().backup(safety);
+
+      // Closing checkpoints and releases the WAL. Overwriting the main file
+      // while it is open leaves a -wal that belongs to the *old* database; on
+      // the next open SQLite replays it over the restored pages and the
+      // restore quietly reverts itself.
+      closeDb();
+      replaceDatabaseFile(current, res.filePaths[0]);
+
+      const reopened = openCompany(current);
+      runMigrations(reopened);
+
       void dialog.showMessageBox(win!, {
-        type: 'info', message: 'Restore complete. Please restart the application.', buttons: ['OK']
+        type: 'info',
+        message: s.restoreDoneTitle,
+        detail: s.restoreDoneDetail,
+        buttons: ['OK']
       });
       return { ok: true, path: res.filePaths[0], safetyCopy: safety };
     } catch (e) {
-      return { ok: false, error: (e as Error).message };
+      // Never leave the app holding a closed handle: get the original back.
+      try { closeDb(); } catch { /* already closed */ }
+      try {
+        dropWalSidecars(current);
+        copyFileSync(safety, current);
+        runMigrations(openCompany(current));
+      } catch { /* the safety copy path is reported below */ }
+      return { ok: false, error: (e as Error).message, safetyCopy: safety };
     }
   });
 };

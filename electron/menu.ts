@@ -1,107 +1,6 @@
 import { app, Menu, dialog, type BrowserWindow, type MenuItemConstructorOptions } from 'electron';
-import { MENU_CHANNEL, type AppLanguage, type MenuMessage } from '@shared/ipc-channels';
-
-/**
- * Menu labels live here rather than in the renderer's i18n bundle because the
- * native menu is built by the main process, which has no access to
- * react-i18next. The renderer reports its language on mount and on every
- * change, and the menu is rebuilt to match.
- */
-interface MenuStrings {
-  file: string; edit: string; view: string; go: string; language: string; window: string; help: string;
-  backup: string; restore: string; exportCsv: string; print: string; close: string; quit: string;
-  undo: string; redo: string; cut: string; copy: string; paste: string; selectAll: string;
-  reload: string; toggleDevTools: string; resetZoom: string; zoomIn: string; zoomOut: string;
-  fullscreen: string; minimize: string;
-  dashboard: string; invoices: string; journal: string; reports: string; settings: string;
-  arabic: string; english: string; about: string; aboutDetail: string;
-  services: string; hide: string; hideOthers: string; unhide: string;
-}
-
-const STRINGS: Record<AppLanguage, MenuStrings> = {
-  ar: {
-    file: 'ملف',
-    edit: 'تحرير',
-    view: 'عرض',
-    go: 'انتقال',
-    language: 'اللغة',
-    window: 'نافذة',
-    help: 'مساعدة',
-    backup: 'نسخ احتياطي لقاعدة البيانات…',
-    restore: 'استعادة قاعدة البيانات…',
-    exportCsv: 'تصدير العرض الحالي (CSV)…',
-    print: 'طباعة…',
-    close: 'إغلاق',
-    quit: 'إنهاء',
-    undo: 'تراجع',
-    redo: 'إعادة',
-    cut: 'قص',
-    copy: 'نسخ',
-    paste: 'لصق',
-    selectAll: 'تحديد الكل',
-    reload: 'إعادة تحميل',
-    toggleDevTools: 'أدوات المطوّر',
-    resetZoom: 'حجم فعلي',
-    zoomIn: 'تكبير',
-    zoomOut: 'تصغير',
-    fullscreen: 'ملء الشاشة',
-    minimize: 'تصغير النافذة',
-    dashboard: 'لوحة المعلومات',
-    invoices: 'الفواتير',
-    journal: 'اليومية',
-    reports: 'التقارير',
-    settings: 'الإعدادات',
-    arabic: 'العربية',
-    english: 'English',
-    about: 'حول محاسب',
-    aboutDetail: 'تطبيق محاسبة ومخزون محلي، عربي أولًا. بدون ربا وبدون ضرائب.',
-    services: 'خدمات',
-    hide: 'إخفاء محاسب',
-    hideOthers: 'إخفاء الآخرين',
-    unhide: 'إظهار الكل'
-  },
-  en: {
-    file: 'File',
-    edit: 'Edit',
-    view: 'View',
-    go: 'Go',
-    language: 'Language',
-    window: 'Window',
-    help: 'Help',
-    backup: 'Back up database…',
-    restore: 'Restore database…',
-    exportCsv: 'Export current view (CSV)…',
-    print: 'Print…',
-    close: 'Close',
-    quit: 'Quit',
-    undo: 'Undo',
-    redo: 'Redo',
-    cut: 'Cut',
-    copy: 'Copy',
-    paste: 'Paste',
-    selectAll: 'Select All',
-    reload: 'Reload',
-    toggleDevTools: 'Toggle Developer Tools',
-    resetZoom: 'Actual Size',
-    zoomIn: 'Zoom In',
-    zoomOut: 'Zoom Out',
-    fullscreen: 'Toggle Full Screen',
-    minimize: 'Minimize',
-    dashboard: 'Dashboard',
-    invoices: 'Invoices',
-    journal: 'Journal',
-    reports: 'Reports',
-    settings: 'Settings',
-    arabic: 'العربية',
-    english: 'English',
-    about: 'About Mohasib',
-    aboutDetail: 'Local-first, Arabic-first accounting and inventory. No interest, no taxes.',
-    services: 'Services',
-    hide: 'Hide Mohasib',
-    hideOthers: 'Hide Others',
-    unhide: 'Show All'
-  }
-};
+import type { AppLanguage, MenuMessage } from '@shared/ipc-channels';
+import { S, setMainLanguage, type MainStrings } from './strings';
 
 export interface MenuDeps {
   getWindow: () => BrowserWindow | null;
@@ -109,7 +8,7 @@ export interface MenuDeps {
   setLanguage: (lng: AppLanguage) => void;
 }
 
-const showAbout = (window: BrowserWindow | null, s: MenuStrings): void => {
+const showAbout = (window: BrowserWindow | null, s: MainStrings): void => {
   const detail = `${s.aboutDetail}\n\nElectron ${process.versions.electron} · Chromium ${process.versions.chrome} · Node ${process.versions.node}`;
   const options = { type: 'info' as const, title: s.about, message: `Mohasib ${app.getVersion()}`, detail, buttons: ['OK'] };
   if (window) void dialog.showMessageBox(window, options);
@@ -117,7 +16,8 @@ const showAbout = (window: BrowserWindow | null, s: MenuStrings): void => {
 };
 
 export const buildMenu = (lang: AppLanguage, deps: MenuDeps): void => {
-  const s = STRINGS[lang] ?? STRINGS.en;
+  setMainLanguage(lang);
+  const s = S();
   const isMac = process.platform === 'darwin';
   const go = (route: string): void => deps.send({ action: 'navigate', route });
 

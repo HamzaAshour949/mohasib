@@ -77,7 +77,7 @@
   "backupSave": "Save backup",
   "backupRestore": "Restore backup",
   "backupDone": "Backup saved",
-  "restoreDone": "Restored — please restart the app",
+  "restoreDone": "Database restored",
   "runAudit": "Run audit",
   "yearEndClose": "Year-end close",
   "depreciate": "Depreciate",

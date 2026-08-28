@@ -2,9 +2,10 @@ import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
 import path from 'node:path';
 import { writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { openCompany, closeDb } from './services/db';
+import { openCompany, closeDb, db as database } from './services/db';
 import { runMigrations } from './services/migrations';
 import { buildMenu } from './menu';
+import { S, setMainLanguage } from './strings';
 import { registerAccounts, registerSettings } from './ipc/accounts';
 import { registerParties } from './ipc/parties';
 import { registerItems, registerWarehouses, registerCashboxes } from './ipc/inventory';
@@ -104,16 +105,14 @@ const applyContentsGuards = (contents: Electron.WebContents): void => {
 // ---------------------------------------------------------------------------
 
 const confirmDiscard = async (window: BrowserWindow): Promise<boolean> => {
-  const strings = language === 'ar'
-    ? { message: 'لديك تغييرات غير محفوظة.', detail: 'إذا تابعت فستفقد هذه التغييرات.', discard: 'تجاهل التغييرات', cancel: 'إلغاء' }
-    : { message: 'You have unsaved changes.', detail: 'Continuing will discard them.', discard: 'Discard changes', cancel: 'Cancel' };
+  const s = S();
   const { response } = await dialog.showMessageBox(window, {
     type: 'warning',
-    buttons: [strings.cancel, strings.discard],
+    buttons: [s.cancel, s.discardChanges],
     defaultId: 0,
     cancelId: 0,
-    message: strings.message,
-    detail: strings.detail
+    message: s.unsavedTitle,
+    detail: s.unsavedDetail
   });
   return response === 1;
 };
@@ -202,6 +201,13 @@ const registerShellIpc = (): void => {
     if (lng === language) return { ok: true };
     language = lng;
     installMenu();
+    // Persist so the menu comes up in the right language next launch, before
+    // the renderer has had a chance to report anything.
+    try {
+      database()
+        .prepare(`INSERT INTO settings(key, value) VALUES ('language', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+        .run(lng);
+    } catch { /* settings persistence is not worth failing a menu click over */ }
     return { ok: true };
   });
 
@@ -265,11 +271,12 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', focusWindow);
 
   void app.whenReady().then(() => {
-    const database = openCompany();
-    runMigrations(database);
+    const opened = openCompany();
+    runMigrations(opened);
 
-    const stored = database.prepare(`SELECT value FROM settings WHERE key='language'`).get() as { value?: string } | undefined;
+    const stored = opened.prepare(`SELECT value FROM settings WHERE key='language'`).get() as { value?: string } | undefined;
     language = stored?.value === 'en' ? 'en' : 'ar';
+    setMainLanguage(language);
 
     // Nothing in this app needs camera, microphone, location or notifications.
     session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));

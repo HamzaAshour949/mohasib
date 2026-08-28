@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Link, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { setLanguage } from './lib/i18n';
@@ -131,6 +132,7 @@ const Header: React.FC = () => {
 export default function App(): JSX.Element {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [groupNotes, setGroupNotes] = useState<string>('');
 
   const onMenu = useCallback(async (message: MenuMessage): Promise<void> => {
@@ -143,8 +145,12 @@ export default function App(): JSX.Element {
       }
       case 'restore': {
         const r = await api.backup.restore() as { ok: boolean; error?: string };
-        if (r.ok) alert(t('restoreDone'));
-        else if (r.error !== 'cancelled') alert(r.error ?? t('error'));
+        if (r.ok) {
+          // The main process reopened the replaced file, so every cached row
+          // on screen now belongs to a database that no longer exists.
+          await queryClient.invalidateQueries();
+          alert(t('restoreDone'));
+        } else if (r.error !== 'cancelled') alert(r.error ?? t('error'));
         return;
       }
       case 'export':
@@ -165,7 +171,7 @@ export default function App(): JSX.Element {
         if (message.language) setLanguage(message.language);
         return;
     }
-  }, [navigate, t]);
+  }, [navigate, queryClient, t]);
 
   useEffect(() => {
     const off = api.app.onMenu((message) => { void onMenu(message); });
