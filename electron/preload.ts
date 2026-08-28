@@ -1,4 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import {
+  ABOUT_CHANNEL, CONFIRM_DISCARD_CHANNEL, DIRTY_CHANNEL, LANGUAGE_CHANNEL,
+  MENU_CHANNEL, READY_CHANNEL, SAVE_TEXT_FILE_CHANNEL,
+  type AppLanguage, type MenuMessage, type SaveTextFileRequest, type SaveTextFileResult
+} from '@shared/ipc-channels';
 
 const invoke = <T>(channel: string, ...args: unknown[]): Promise<T> =>
   ipcRenderer.invoke(channel, ...args) as Promise<T>;
@@ -192,10 +197,28 @@ const api = {
     quote: (args: unknown) => invoke('quotes:convert', args),
     order: (args: unknown) => invoke('orders:convert', args)
   },
-  on: (channel: string, handler: (...args: unknown[]) => void): (() => void) => {
-    const listener = (_e: unknown, ...args: unknown[]): void => handler(...args);
-    ipcRenderer.on(channel, listener);
-    return () => { ipcRenderer.off(channel, listener); };
+  app: {
+    /** Tell the main process the renderer is mounted; flushes queued menu messages. */
+    ready: () => invoke<{ ok: boolean }>(READY_CHANNEL),
+    /** Mirror the UI language into the native menu. */
+    setLanguage: (lng: AppLanguage) => invoke<{ ok: boolean }>(LANGUAGE_CHANNEL, lng),
+    /** Report whether an editor holds unsaved edits, so the close guard can act. */
+    setDirty: (dirty: boolean) => invoke<{ ok: boolean }>(DIRTY_CHANNEL, dirty),
+    /** Ask the native discard prompt; resolves true when it is safe to proceed. */
+    confirmDiscard: () => invoke<{ discard: boolean }>(CONFIRM_DISCARD_CHANNEL),
+    versions: () => invoke<{ version: string; electron: string; chrome: string; node: string }>(ABOUT_CHANNEL),
+    /** Write text through a native save dialog — the renderer has no filesystem access. */
+    saveTextFile: (request: SaveTextFileRequest) => invoke<SaveTextFileResult>(SAVE_TEXT_FILE_CHANNEL, request),
+    /**
+     * Subscribe to native-menu actions. Deliberately not a generic
+     * `on(channel, handler)`: that let the renderer listen on any main-process
+     * channel, and nothing needs that.
+     */
+    onMenu: (handler: (message: MenuMessage) => void): (() => void) => {
+      const listener = (_e: unknown, message: MenuMessage): void => handler(message);
+      ipcRenderer.on(MENU_CHANNEL, listener);
+      return () => { ipcRenderer.off(MENU_CHANNEL, listener); };
+    }
   }
 };
 

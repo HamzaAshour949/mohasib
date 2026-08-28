@@ -1,8 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link, NavLink, Route, Routes, useLocation } from 'react-router-dom';
+import { Link, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { setLanguage } from './lib/i18n';
 import { api } from './lib/ipc';
+import { runViewAction } from './lib/view-actions';
+import { confirmDiscard } from './lib/dirty';
+import type { MenuMessage } from '@shared/ipc-channels';
 import Dashboard from './routes/Dashboard';
 import AccountsPage from './routes/Accounts';
 import PartiesPage from './routes/Parties';
@@ -126,33 +129,70 @@ const Header: React.FC = () => {
 };
 
 export default function App(): JSX.Element {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const navigate = useNavigate();
   const [groupNotes, setGroupNotes] = useState<string>('');
-  useEffect(() => {
-    const offBackup = api.on('menu:backup', async () => {
-      const r = await api.backup.save() as { ok: boolean; error?: string; path?: string };
-      if (r.ok) alert(`${t('backupDone')}: ${r.path ?? ''}`);
-      else if (r.error !== 'cancelled') alert(r.error ?? t('error'));
-    });
-    const offRestore = api.on('menu:restore', async () => {
-      const r = await api.backup.restore() as { ok: boolean; error?: string };
-      if (r.ok) alert(t('restoreDone'));
-      else if (r.error !== 'cancelled') alert(r.error ?? t('error'));
-    });
-    // Show group notes once per session
-    if (!sessionStorage.getItem('mohasib.groupNotesShown')) {
-      void (async () => {
-        try {
-          const s = await api.settings.get() as { groupNotes?: string };
-          if (s.groupNotes && s.groupNotes.trim()) {
-            setGroupNotes(s.groupNotes);
-            sessionStorage.setItem('mohasib.groupNotesShown', '1');
-          }
-        } catch { /* ignore */ }
-      })();
+
+  const onMenu = useCallback(async (message: MenuMessage): Promise<void> => {
+    switch (message.action) {
+      case 'backup': {
+        const r = await api.backup.save() as { ok: boolean; error?: string; path?: string };
+        if (r.ok) alert(`${t('backupDone')}: ${r.path ?? ''}`);
+        else if (r.error !== 'cancelled') alert(r.error ?? t('error'));
+        return;
+      }
+      case 'restore': {
+        const r = await api.backup.restore() as { ok: boolean; error?: string };
+        if (r.ok) alert(t('restoreDone'));
+        else if (r.error !== 'cancelled') alert(r.error ?? t('error'));
+        return;
+      }
+      case 'export':
+        if (!runViewAction('onExport')) alert(t('nothingToExport'));
+        return;
+      case 'print':
+        // Pages that render a report supply their own formatted print output;
+        // anything else falls back to printing the window as it stands.
+        if (!runViewAction('onPrint')) window.print();
+        return;
+      case 'navigate':
+        if (!message.route) return;
+        // Leaving the page discards whatever the open editor holds.
+        if (!(await confirmDiscard())) return;
+        navigate(message.route);
+        return;
+      case 'set-language':
+        if (message.language) setLanguage(message.language);
+        return;
     }
-    return () => { offBackup(); offRestore(); };
-  }, [t]);
+  }, [navigate, t]);
+
+  useEffect(() => {
+    const off = api.app.onMenu((message) => { void onMenu(message); });
+    // Only now is the renderer actually listening: menu actions fired before
+    // this point were queued in the main process and arrive on this call.
+    void api.app.ready();
+    return off;
+  }, [onMenu]);
+
+  // Keep the native menu's language and its radio state in step with the UI.
+  useEffect(() => {
+    void api.app.setLanguage(i18n.language === 'en' ? 'en' : 'ar');
+  }, [i18n.language]);
+
+  useEffect(() => {
+    // Show group notes once per session
+    if (sessionStorage.getItem('mohasib.groupNotesShown')) return;
+    void (async () => {
+      try {
+        const s = await api.settings.get() as { groupNotes?: string };
+        if (s.groupNotes && s.groupNotes.trim()) {
+          setGroupNotes(s.groupNotes);
+          sessionStorage.setItem('mohasib.groupNotesShown', '1');
+        }
+      } catch { /* ignore */ }
+    })();
+  }, []);
 
   return (
     <div className="h-screen flex bg-bg text-fg">

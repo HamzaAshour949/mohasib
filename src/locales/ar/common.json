@@ -132,5 +132,6 @@
   "period": "الفترة",
   "actual": "الفعلي",
   "variance": "الانحراف",
-  "budgetVsActual": "الموازنة مقابل الفعلي"
+  "budgetVsActual": "الموازنة مقابل الفعلي",
+  "nothingToExport": "لا يوجد ما يمكن تصديره في هذه الصفحة"
 }

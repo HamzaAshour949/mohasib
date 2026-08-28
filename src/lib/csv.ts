@@ -1,5 +1,12 @@
-// CSV export with Excel-friendly UTF-8 BOM.
-// Field rules: wrap in double quotes if contains comma, quote, or newline; double up internal quotes.
+// CSV export. Fields are quoted when they contain a comma, quote, semicolon or
+// newline; internal quotes are doubled.
+//
+// Writing happens in the main process behind a native save dialog. The old
+// blob-URL `<a download>` route dropped the file into the default downloads
+// directory with no dialog and no indication of where it went, and it is
+// exactly the kind of implicit filesystem access the sandbox exists to stop.
+
+import { api } from './ipc';
 
 export interface CsvCol<T> {
   header: string;
@@ -9,10 +16,7 @@ export interface CsvCol<T> {
 const escapeCell = (raw: string | number | null | undefined): string => {
   if (raw === null || raw === undefined) return '';
   const s = String(raw);
-  if (/[",\r\n;]/.test(s)) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
+  return /[",\r\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 
 export const toCsv = <T,>(rows: T[], cols: CsvCol<T>[]): string => {
@@ -21,19 +25,18 @@ export const toCsv = <T,>(rows: T[], cols: CsvCol<T>[]): string => {
   return [head, ...body].join('\r\n');
 };
 
-export const downloadCsv = (filename: string, csv: string): void => {
-  const BOM = '\uFEFF'; // Excel UTF-8 detection
-  const blob = new Blob([BOM + csv], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename.endsWith('.csv') ? filename : `${filename}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+export const saveCsv = async (filename: string, csv: string): Promise<string | null> => {
+  const suggestedName = filename.endsWith('.csv') ? filename : `${filename}.csv`;
+  const result = await api.app.saveTextFile({
+    suggestedName,
+    contents: csv,
+    filter: { name: 'CSV', extensions: ['csv'] }
+  });
+  if (result.ok) return result.path ?? null;
+  if (result.error && result.error !== 'cancelled') throw new Error(result.error);
+  return null;
 };
 
 export const exportRows = <T,>(filename: string, rows: T[], cols: CsvCol<T>[]): void => {
-  downloadCsv(filename, toCsv(rows, cols));
+  void saveCsv(filename, toCsv(rows, cols)).catch((e: Error) => alert(e.message));
 };

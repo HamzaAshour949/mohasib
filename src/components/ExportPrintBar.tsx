@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { exportRows, type CsvCol } from '../lib/csv';
 import { printHtml, escapeHtml } from '../lib/print';
+import { useViewActions } from '../lib/view-actions';
 
 interface Props<T> {
   filename: string;
@@ -32,6 +33,9 @@ export function ExportPrintBar<T>({ filename, title, rows, cols, printSummary }:
     `;
     printHtml(title, html, lang);
   };
+
+  // Makes the File menu's Export and Print items act on this page.
+  useViewActions({ onExport: onCsv, onPrint });
 
   return (
     <div className="flex gap-2 mb-3">
