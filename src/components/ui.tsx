@@ -90,14 +90,31 @@ export function Table<T>({
   );
 }
 
-export const Modal: React.FC<{ open: boolean; onClose: () => void; title?: string; children: React.ReactNode; wide?: boolean }> = ({
-  open, onClose, title, children, wide
-}) => {
+export const Modal: React.FC<{
+  open: boolean;
+  onClose: () => void;
+  title?: string;
+  children: React.ReactNode;
+  wide?: boolean;
+  /** Shows an unsaved-changes marker, so the close guard is not a surprise. */
+  dirty?: boolean;
+  dirtyLabel?: string;
+}> = ({ open, onClose, title, children, wide, dirty, dirtyLabel }) => {
   if (!open) return null;
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-40 p-4" onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} className={`bg-panel border border-line rounded-lg shadow-xl ${wide ? 'w-[900px]' : 'w-[480px]'} max-h-[90vh] overflow-auto`}>
-        {title && <div className="px-4 py-3 border-b border-line font-semibold">{title}</div>}
+        {title && (
+          <div className="px-4 py-3 border-b border-line font-semibold flex items-center gap-2">
+            <span>{title}</span>
+            {dirty && (
+              <span data-unsaved="true" className="text-xs font-normal text-amber-400 flex items-center gap-1">
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400" />
+                {dirtyLabel}
+              </span>
+            )}
+          </div>
+        )}
         <div className="p-4">{children}</div>
       </div>
     </div>

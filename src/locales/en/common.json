@@ -170,6 +170,8 @@
   "partyAndOneLineRequired": "A party and at least one line are required",
   "partyAndOffsetAccountRequired": "A party and an offset account are required",
   "noItemForBarcode": "No item for barcode: {{code}}",
+  "sourceType": "Source",
+  "unsavedChanges": "Unsaved changes",
   "errors": {
     "periodLocked": "Period is locked ({{start}} → {{end}}){{reason}}",
     "prohibitedTerm": "Contains the prohibited term “{{term}}” — riba and tax workflows are not supported.",

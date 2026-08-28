@@ -170,6 +170,8 @@
   "partyAndOneLineRequired": "يجب اختيار الجهة وإضافة سطر واحد على الأقل",
   "partyAndOffsetAccountRequired": "يجب اختيار الجهة والحساب المقابل",
   "noItemForBarcode": "لا يوجد صنف بالباركود: {{code}}",
+  "sourceType": "المصدر",
+  "unsavedChanges": "تغييرات غير محفوظة",
   "errors": {
     "periodLocked": "الفترة مقفلة ({{start}} → {{end}}){{reason}}",
     "prohibitedTerm": "يحتوي على مصطلح محظور «{{term}}» — لا يدعم النظام الفوائد الربوية أو الضرائب.",

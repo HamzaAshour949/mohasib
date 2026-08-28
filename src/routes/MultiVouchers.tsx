@@ -6,6 +6,7 @@ import type { Cashbox, Party } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Select, Table } from '../components/ui';
 import { formatMoney, majorToMinor, today } from '../lib/money';
 import { describeError } from '../lib/errors';
+import { confirmDiscard, useDirtyDocument } from '../lib/dirty';
 
 interface MultiVoucher {
   id: number; kind: 'receipt' | 'payment'; serial: string; date: string;
@@ -40,6 +41,24 @@ export default function MultiVouchersPage(): JSX.Element {
     setKind('receipt'); setDate(today()); setCashboxId(''); setCurrency('USD');
     setNotes(''); setLines([]);
   };
+  // Losing a half-entered document because a modal was dismissed is the kind
+  // of thing people only notice after it happens. The same prompt guards the
+  // window close, so the two cannot disagree.
+  const dirty = open && (lines.length > 0 || notes !== '');
+  useDirtyDocument(dirty);
+
+  const closeEditor = async (): Promise<void> => {
+    if (dirty && !(await confirmDiscard())) return;
+    setOpen(false);
+    reset();
+  };
+
+  const openEditor = async (): Promise<void> => {
+    if (dirty && !(await confirmDiscard())) return;
+    reset();
+    setOpen(true);
+  };
+
 
   const save = async (): Promise<void> => {
     if (!cashboxId) { alert(t('cashboxRequired')); return; }
@@ -56,7 +75,7 @@ export default function MultiVouchersPage(): JSX.Element {
   };
 
   return (
-    <Page title={tn('multiVouchers')} toolbar={<Btn onClick={() => { reset(); setOpen(true); }}>{t('new')}</Btn>}>
+    <Page title={tn('multiVouchers')} toolbar={<Btn onClick={() => { void openEditor(); }}>{t('new')}</Btn>}>
       <Table<MultiVoucher>
         rows={data}
         cols={[
@@ -68,7 +87,7 @@ export default function MultiVouchersPage(): JSX.Element {
             render: r => formatMoney(r.totalMinor, r.currency) }
         ]}
       />
-      <Modal open={open} onClose={() => setOpen(false)} title={t('new')} wide>
+      <Modal open={open} dirty={dirty} dirtyLabel={t('unsavedChanges')} onClose={() => { void closeEditor(); }} title={t('new')} wide>
         <div className="grid grid-cols-4 gap-3">
           <div><Label>{t('type')}</Label>
             <Select value={kind} onChange={e => setKind(e.target.value as 'receipt' | 'payment')}>
@@ -112,7 +131,7 @@ export default function MultiVouchersPage(): JSX.Element {
         </table>
         <div className="mt-3"><Label>{t('notes')}</Label><Input value={notes} onChange={e => setNotes(e.target.value)} /></div>
         <div className="flex justify-end gap-2 mt-4">
-          <Btn variant="ghost" onClick={() => setOpen(false)}>{t('cancel')}</Btn>
+          <Btn variant="ghost" onClick={() => { void closeEditor(); }}>{t('cancel')}</Btn>
           <Btn onClick={save}>{t('save')}</Btn>
         </div>
       </Modal>

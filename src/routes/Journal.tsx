@@ -48,7 +48,7 @@ export default function JournalPage(): JSX.Element {
           { key: 'date', header: t('date'), className: 'ltr-num w-28' },
           { key: 'reference', header: t('reference'), className: 'ltr-num w-32' },
           { key: 'memo', header: t('memo') },
-          { key: 'sourceType', header: 'Source', className: 'w-24' },
+          { key: 'sourceType', header: t('sourceType'), className: 'w-24' },
           { key: 'totalMinor', header: t('amount'), className: 'ltr-num text-end',
             render: r => formatMoney(r.totalMinor, r.currency) }
         ]}

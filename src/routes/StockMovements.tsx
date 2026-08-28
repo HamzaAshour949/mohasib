@@ -6,6 +6,7 @@ import type { Item, Warehouse } from '@shared/types';
 import { Btn, Input, Label, Modal, Page, Select, Table } from '../components/ui';
 import { majorToMinor, today } from '../lib/money';
 import { describeError } from '../lib/errors';
+import { confirmDiscard, useDirtyDocument } from '../lib/dirty';
 
 interface SM {
   id: number; serial: string; date: string; kind: string;
@@ -35,6 +36,24 @@ export default function StockMovementsPage(): JSX.Element {
     setDate(today()); setKind('transfer'); setFromWarehouseId(''); setToWarehouseId('');
     setNotes(''); setLines([]);
   };
+  // Losing a half-entered document because a modal was dismissed is the kind
+  // of thing people only notice after it happens. The same prompt guards the
+  // window close, so the two cannot disagree.
+  const dirty = open && (lines.length > 0 || notes !== '');
+  useDirtyDocument(dirty);
+
+  const closeEditor = async (): Promise<void> => {
+    if (dirty && !(await confirmDiscard())) return;
+    setOpen(false);
+    reset();
+  };
+
+  const openEditor = async (): Promise<void> => {
+    if (dirty && !(await confirmDiscard())) return;
+    reset();
+    setOpen(true);
+  };
+
   const addLine = (): void => setLines([...lines, { itemId: items[0]?.id ?? 0, qty: '1', costMajor: '0' }]);
   const upd = (i: number, p: Partial<Line>): void => setLines(lines.map((l, idx) => idx === i ? { ...l, ...p } : l));
   const rm = (i: number): void => setLines(lines.filter((_, idx) => idx !== i));
@@ -87,7 +106,7 @@ export default function StockMovementsPage(): JSX.Element {
   };
 
   return (
-    <Page title={t('stockMovements')} toolbar={<Btn onClick={() => { reset(); setOpen(true); }}>{t('new')}</Btn>}>
+    <Page title={t('stockMovements')} toolbar={<Btn onClick={() => { void openEditor(); }}>{t('new')}</Btn>}>
       <Table<SM>
         rows={data}
         cols={[
@@ -100,7 +119,7 @@ export default function StockMovementsPage(): JSX.Element {
           { key: 'notes', header: t('notes') }
         ]}
       />
-      <Modal open={open} onClose={() => setOpen(false)} title={t('new')} wide>
+      <Modal open={open} dirty={dirty} dirtyLabel={t('unsavedChanges')} onClose={() => { void closeEditor(); }} title={t('new')} wide>
         <div className="grid grid-cols-4 gap-3">
           <div><Label>{t('date')}</Label><Input type="date" className="ltr-num" value={date} onChange={e => setDate(e.target.value)} /></div>
           <div><Label>{t('type')}</Label>
@@ -159,7 +178,7 @@ export default function StockMovementsPage(): JSX.Element {
         </table>
         <div className="mt-3"><Label>{t('notes')}</Label><Input value={notes} onChange={e => setNotes(e.target.value)} /></div>
         <div className="flex justify-end gap-2 mt-4">
-          <Btn variant="ghost" onClick={() => setOpen(false)}>{t('cancel')}</Btn>
+          <Btn variant="ghost" onClick={() => { void closeEditor(); }}>{t('cancel')}</Btn>
           <Btn onClick={save}>{t('save')}</Btn>
         </div>
       </Modal>

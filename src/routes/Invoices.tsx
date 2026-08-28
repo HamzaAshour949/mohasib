@@ -10,6 +10,7 @@ import { printHtml, escapeHtml } from '../lib/print';
 import { useBarcodeScanner } from '../lib/barcode';
 import { useIndexById, useNamesById } from '../lib/lookup';
 import { describeError } from '../lib/errors';
+import { confirmDiscard, useDirtyDocument } from '../lib/dirty';
 
 interface EditorLine { itemId: number; qty: string; unitMajor: string; discountMajor: string; }
 
@@ -81,7 +82,23 @@ export default function InvoicesPage(): JSX.Element {
     setLines([]); setInvDiscMajor('0'); setFeesMajor('0'); setNotes('');
   };
 
-  const openNew = () => { reset(); setOpen(true); };
+  // Losing a half-entered invoice because a modal was dismissed is the kind of
+  // thing people only notice after it happens. The same prompt guards the
+  // window close, so the two cannot disagree.
+  const dirty = open && (lines.length > 0 || notes !== '' || invDiscMajor !== '0' || feesMajor !== '0');
+  useDirtyDocument(dirty);
+
+  const openNew = async (): Promise<void> => {
+    if (dirty && !(await confirmDiscard())) return;
+    reset();
+    setOpen(true);
+  };
+
+  const closeEditor = async (): Promise<void> => {
+    if (dirty && !(await confirmDiscard())) return;
+    setOpen(false);
+    reset();
+  };
 
   const addLine = () => setLines([...lines, { itemId: items[0]?.id ?? 0, qty: '1', unitMajor: '0', discountMajor: '0' }]);
   const updLine = (i: number, patch: Partial<EditorLine>) => setLines(lines.map((l, idx) => idx === i ? { ...l, ...patch } : l));
@@ -198,6 +215,7 @@ export default function InvoicesPage(): JSX.Element {
     const r = await api.invoices.save(payload) as { ok: boolean; error?: string };
     if (!r.ok) { alert(describeError(t, r)); return; }
     setOpen(false);
+    reset();
     void qc.invalidateQueries({ queryKey: ['invoices'] });
     void qc.invalidateQueries({ queryKey: ['dashboard'] });
   };
@@ -212,7 +230,7 @@ export default function InvoicesPage(): JSX.Element {
             {INVOICE_KINDS.map(k => <option key={k} value={k}>{tf(KIND_KEYS[k])}</option>)}
           </Select>
           <Btn variant="ghost" onClick={exportList}>{t('exportCsv')}</Btn>
-          <Btn onClick={openNew}>{t('new')}</Btn>
+          <Btn onClick={() => { void openNew(); }}>{t('new')}</Btn>
         </div>
       }
     >
@@ -231,7 +249,7 @@ export default function InvoicesPage(): JSX.Element {
         ]}
       />
 
-      <Modal open={open} onClose={() => setOpen(false)} title={`${t('new')} — ${tf(KIND_KEYS[kind])}`} wide>
+      <Modal open={open} dirty={dirty} dirtyLabel={t('unsavedChanges')} onClose={() => { void closeEditor(); }} title={`${t('new')} — ${tf(KIND_KEYS[kind])}`} wide>
         <div className="grid grid-cols-4 gap-3">
           <div>
             <Label>{tf('kind')}</Label>
@@ -325,7 +343,7 @@ export default function InvoicesPage(): JSX.Element {
         <div className="mt-3"><Label>{tf('notes')}</Label><Input value={notes} onChange={e => setNotes(e.target.value)} /></div>
 
         <div className="flex justify-end gap-2 mt-4">
-          <Btn variant="ghost" onClick={() => setOpen(false)}>{t('cancel')}</Btn>
+          <Btn variant="ghost" onClick={() => { void closeEditor(); }}>{t('cancel')}</Btn>
           <Btn onClick={save}>{tf('post')}</Btn>
         </div>
       </Modal>

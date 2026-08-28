@@ -201,6 +201,34 @@ try {
   const dirtyAck = await evaluate('window.api.app.setDirty(true).then(r => r.ok)');
   check(dirtyAck === true, 'renderer can arm the unsaved-changes guard');
   await evaluate('window.api.app.setDirty(false)');
+  // Nothing open: the discard prompt must not appear, and must resolve true so
+  // the caller proceeds rather than hanging on a dialog that never shows.
+  const cleanDiscard = await evaluate('window.api.app.confirmDiscard().then(r => r.discard)');
+  check(cleanDiscard === true, 'discard prompt is skipped when nothing is dirty');
+
+  // --- opening a document editor actually marks the document dirty ---
+  // The whole guard is worthless if editing never sets the flag, and that is
+  // invisible from the UI: the window simply closes without asking.
+  await evaluate('location.hash = "#/invoices"');
+  await waitFor('document.querySelectorAll("main table thead th").length > 0');
+  const editorOpened = await waitFor(`(() => {
+    const buttons = [...document.querySelectorAll('button')];
+    const add = buttons[buttons.length - 1];
+    if (!add) return false;
+    add.click();
+    return true;
+  })()`);
+  check(editorOpened === true, 'invoice editor opens from the toolbar');
+  const lineAdded = await waitFor(`(() => {
+    const buttons = [...document.querySelectorAll('button')];
+    const addLine = buttons.find(b => b.offsetParent && b.closest('.fixed'));
+    if (!addLine) return false;
+    addLine.click();
+    return document.querySelectorAll('.fixed table tbody tr').length > 0;
+  })()`);
+  check(lineAdded === true, 'adding an invoice line renders a line row');
+  const marked = await waitFor('!!document.querySelector(\'[data-unsaved="true"]\')');
+  check(marked === true, 'an edited document is marked unsaved');
 } catch (error) {
   check(false, 'smoke run completed', error.message);
 }
